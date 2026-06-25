@@ -33,7 +33,7 @@ randomness is a single 128-bit draw from the OS CSPRNG; everything after it is
 deterministic.
 
 ```
-  OS CSPRNG  (getentropy on macOS)        the only entropy — 128 bits, local, offline
+  OS CSPRNG  (getrandom — macOS/Linux/Windows)        the only entropy — 128 bits, local, offline
        │
   12-word mnemonic  ──PBKDF2-HMAC-SHA512──▶  512-bit seed  ──▶  master Xpriv (BIP-32)
                                                                       │  BIP-86 branches
@@ -65,8 +65,8 @@ ledger — reduces to one question: can anyone produce your key without your see
 cannot, and the reason is two independent walls, each ≈ **2¹²⁸** work.
 
 **Where the secret comes from.** The whole secret is the **128 bits** drawn once from the
-operating system's CSPRNG — `getentropy(2)` on macOS, `getrandom(2)` on Linux — which
-seeds the 12-word mnemonic (12 words = 128 bits of entropy + a 4-bit checksum). That draw
+operating system's CSPRNG — `getentropy(2)` on macOS, `getrandom(2)` on Linux, `BCryptGenRandom` on Windows (all
+behind Rust's `getrandom`) — which seeds the 12-word mnemonic (12 words = 128 bits of entropy + a 4-bit checksum). That draw
 is **local and offline**: no server issues it, no registrar records it, nothing crosses
 the network. There is nothing to intercept, because the secret never leaves the machine
 that generated it.
@@ -91,13 +91,13 @@ not specific to `cm`, and one no fielded machine can do today.)
 
 **So the only real attack surface is the entropy source, not the cryptography.** Because
 2¹²⁸ is computationally out of reach, a rational attacker never touches the cipher — they
-attack the *input*. If `getentropy` ever returns predictable bytes, the 128-bit wall
+attack the *input*. If that OS RNG ever returns predictable bytes, the 128-bit wall
 collapses: not because the math failed, but because the randomness was never there. That
 makes the trust boundary explicit — **`cm`'s keys are exactly as strong as the OS-and-
-hardware RNG that Apple and Linux engineer.** Subverting a key means subverting either
+hardware RNG that Apple, Microsoft, and Linux engineer.** Subverting a key means subverting either
 
-- the **kernel CSPRNG** — Apple's XNU random subsystem (seeded by the Secure Enclave's
-  hardware TRNG on Apple Silicon), or the Linux kernel RNG and its entropy pool; or
+- the **kernel CSPRNG** — Apple's XNU random subsystem (Secure Enclave TRNG on Apple Silicon), the Linux
+  kernel RNG and its entropy pool, or Windows' CNG (`BCryptGenRandom`); or
 - the **hardware entropy source** itself — the CPU's `RDRAND`/`RDSEED` on Intel/AMD, or
   the on-die true-random generator on Apple Silicon.
 

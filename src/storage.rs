@@ -92,7 +92,14 @@ pub(crate) fn config_path(env_key: &str, file: &str) -> PathBuf {
     if let Ok(p) = std::env::var(env_key) {
         return PathBuf::from(p);
     }
-    let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
+    // HOME on Unix (Linux/macOS); USERPROFILE is the Windows equivalent. Same
+    // ~/.config/computermoney layout on every OS, so a seed restored on another
+    // machine lands in the same relative place. CM_SEED / CM_LEDGER / CM_POLICY
+    // override this regardless of platform.
+    let mut p = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default();
     p.push(".config");
     p.push("computermoney");
     p.push(file);
