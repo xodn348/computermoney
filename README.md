@@ -7,8 +7,6 @@ identities and pay each other in Bitcoin. They coordinate over a WireGuard tunne
 settle on Bitcoin L1 (Taproot) — one chain transaction per payment, no channels. The
 trust model is WireGuard's: **the key is the identity, not the IP.**
 
-The binary is `cm`. This repo holds the working v1 implementation (`src/`).
-
 ## What `cm` is
 
 `cm` is **an agent-operated, self-custodial Bitcoin L1 wallet.** Each agent runs its
@@ -19,7 +17,7 @@ It is a *wallet*, not a new payment protocol. What makes it different from a hum
 wallet is that a **program** runs it unattended, so it carries the machinery a person
 would otherwise supply by hand:
 
-- **one seed → every key** (Pillar 1, *key is identity*): the same mnemonic derives
+- **one seed → every key** (*key is identity*): the same mnemonic derives
   the Bitcoin keys *and* the WireGuard tunnel key;
 - a **signed, append-only ledger** that is the agent's memory (balance, next address,
   in-flight payments) and its crash-recovery substrate;
@@ -62,7 +60,7 @@ domain separation would derive the tunnel key through its own hardened path or K
 
 ## Why the key is safe
 
-The key *is* the identity (Pillar 1), so the security of everything — funds, tunnel,
+The key *is* the identity, so the security of everything — funds, tunnel,
 ledger — reduces to one question: can anyone produce your key without your seed? They
 cannot, and the reason is two independent walls, each ≈ **2¹²⁸** work.
 
@@ -111,70 +109,16 @@ predictable signing nonces; and the Linux kernel deliberately refuses to *trust 
 alone*, mixing it with other sources precisely because one hardware RNG is a backdoorable
 single point. `cm` inherits that lesson: the cipher is settled — guard the entropy.
 
-## Architecture: WireGuard ↔ `cm` ↔ Bitcoin L1
+## How a payment works: WireGuard ↔ `cm` ↔ Bitcoin L1
 
-Two separate things, deliberately never mixed. WireGuard moves *messages*; Bitcoin L1
-moves *money*; `cm` is the bridge that turns one into the other.
+Two layers, deliberately never mixed: **WireGuard moves *messages*, Bitcoin L1 moves
+*money*, and `cm` is the bridge that turns one into the other.** WireGuard never sees a
+coin or touches a Bitcoin key, and the chain — not any peer's message — is the source of
+truth for whether money actually arrived.
 
-```
-        Agent A  (cm)                                   Agent B  (cm)
-            │                                               │
-            │ ════════════  WireGuard tunnel  ════════════  │   COORDINATION
-            │   AddrRequest{sats} ───────────────────────▶  │   messages only,
-            │   ◀─────────────────────── AddrResponse{addr} │   no money here
-            │   Notify{txid} ───────────────────────────▶   │
-            │                                               │
-   cm: take addr, run policy,                      cm: issue a fresh Taproot
-   build + sign + broadcast a tx                   address, record it, then
-            │                                      reconcile against the chain
-            ▼  broadcast signed transaction                 ▲  query confirmations
-   ════════════════════════  Bitcoin L1 (Taproot/P2TR)  ════════════════════════
-            the only place value moves — and the only source of truth          SETTLEMENT
-```
-
-**Where WireGuard stops.** WireGuard's job is to encrypt, authenticate, and deliver a
-message to the right peer (Noise handshake keyed by the seed-derived X25519 key, over
-UDP). It never sees a coin and never touches a Bitcoin key. Its responsibility ends the
-moment the bytes reach the peer. The messages it carries are tiny: *ask for an address*,
-*here is an address*, *I broadcast this txid*. (The address could travel over any
-channel — WireGuard is simply the private, authenticated line the agents already share.)
-
-**Where Bitcoin L1 begins.** L1's job starts when `cm` broadcasts a signed transaction.
-The chain records the transfer and confirms it; the chain — not any message — is the
-source of truth for money. A `Notify` is only a latency hint.
-
-**What `cm` does in between (the whole product).** `cm` is everything between the two
-layers:
-
-| On the **pay** side | On the **receive** side |
-|---|---|
-| check policy (per-payment + daily limit) *before* contacting the peer | answer `AddrRequest` with a **fresh** Taproot address (rotating BIP-86 index, no reuse) |
-| read the address out of the WireGuard message | record the issuance in the signed ledger |
-| check the blocklist now that the destination is known | record the incoming `Notify` as *pending* |
-| sync UTXOs, **build + sign** a P2TR tx, enforce the fee cap, **broadcast** to L1 | **reconcile** the txid against the chain: 0 / 1 / 3 confs = Pending / Soft / Final |
-| record the `Sent` entry *before* notifying (crash-safe) | count only *Final* money as spendable balance |
-
-So a message carrying an address (WireGuard) becomes a signed transaction (L1) and then
-a confirmed balance (ledger) — and `cm` performs every one of those translations.
-
-### Source layout
-
-| Module | Role |
-|---|---|
-| `src/wallet.rs` | seed → keys: BIP-86 Taproot addresses, Schnorr ledger key, X25519 WG key |
-| `src/storage.rs` | encrypted seed at rest (Argon2id + ChaCha20-Poly1305); config paths |
-| `src/chain.rs` | Bitcoin L1 via `bdk` + esplora: balance, build/sign/broadcast, confirmations |
-| `src/ledger.rs` | signed append-only ledger (the agent's memory) + `reconcile` |
-| `src/protocol.rs` | the wire messages: `AddrRequest` / `AddrResponse` / `Notify` / `Chat` |
-| `src/net.rs` | transport-agnostic payment protocol (the `Wire` seam) |
-| `src/tunnel.rs` | WireGuard transport (`boringtun`), seed-derived WG identity |
-| `src/policy.rs` | spend limits, fee cap, address blocklist |
-
-## End-to-end: the life of one payment
-
-Agent A pays Agent B. Two independent network paths are in play: the WireGuard tunnel
-*between the agents* (works on a LAN or localhost — no internet required) and *each agent's
-own link to the Bitcoin network* (required to actually settle).
+Agent A pays Agent B over two independent network paths: the WireGuard tunnel *between the
+agents* (works on a LAN or localhost — no internet required) and *each agent's own link to
+the Bitcoin network* (required to actually settle).
 
 ```
    Agent A (payer)                                      Agent B (payee)
@@ -225,7 +169,7 @@ top correctness fix is to verify the on-chain output inside `reconcile`.
 - **Now — Bitcoin L1 testnet only.** Settlement runs on **mutinynet** (a 30-second-block
   signet), so 3-confirmation *Final* is ~90 s. It is real on-chain settlement with real
   Taproot, real keys, and a real signed/broadcast transaction — only the coins are
-  worthless. Endpoint and `Network::Signet` are currently hardcoded in `src/chain.rs`.
+  worthless.
 - **Planned — Bitcoin L1 mainnet.** Real BTC. Key derivation already matches the BIP-86
   mainnet test vectors, but mainnet needs explicit fee control (feerate + RBF/CPFP), a
   trusted/own esplora or node backend, and real-value testing first. Not yet built.
