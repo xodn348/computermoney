@@ -120,6 +120,14 @@ impl Ledger {
 
     fn open_inner(path: impl AsRef<Path>, identity: Option<Keypair>) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
+        // Create the ledger's parent directory up front, so the first append
+        // (`cm receive` / `cm pay` / `cm send`) doesn't fail with ENOENT when
+        // CM_LEDGER points at a directory that does not exist yet.
+        if let Some(dir) = path.parent() {
+            if !dir.as_os_str().is_empty() {
+                std::fs::create_dir_all(dir)?;
+            }
+        }
         let verify_key = identity.map(|kp| kp.x_only_public_key().0);
         let mut entries = Vec::new();
         if path.exists() {
