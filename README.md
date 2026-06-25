@@ -33,7 +33,7 @@ randomness is a single 128-bit draw from the OS CSPRNG; everything after it is
 deterministic.
 
 ```
-  OS CSPRNG  (getrandom — macOS/Linux/Windows)        the only entropy — 128 bits, local, offline
+  OS CSPRNG  (getrandom — macOS or Linux)        the only entropy — 128 bits, local, offline
        │
   12-word mnemonic  ──PBKDF2-HMAC-SHA512──▶  512-bit seed  ──▶  master Xpriv (BIP-32)
                                                                       │  BIP-86 branches
@@ -65,8 +65,8 @@ ledger — reduces to one question: can anyone produce your key without your see
 cannot, and the reason is two independent walls, each ≈ **2¹²⁸** work.
 
 **Where the secret comes from.** The whole secret is the **128 bits** drawn once from the
-operating system's CSPRNG — `getentropy(2)` on macOS, `getrandom(2)` on Linux, `BCryptGenRandom` on Windows (all
-behind Rust's `getrandom`) — which seeds the 12-word mnemonic (12 words = 128 bits of entropy + a 4-bit checksum). That draw
+operating system's CSPRNG — `getentropy(2)` on macOS, `getrandom(2)` on Linux (both behind Rust's
+`getrandom`) — which seeds the 12-word mnemonic (12 words = 128 bits of entropy + a 4-bit checksum). That draw
 is **local and offline**: no server issues it, no registrar records it, nothing crosses
 the network. There is nothing to intercept, because the secret never leaves the machine
 that generated it.
@@ -94,10 +94,10 @@ not specific to `cm`, and one no fielded machine can do today.)
 attack the *input*. If that OS RNG ever returns predictable bytes, the 128-bit wall
 collapses: not because the math failed, but because the randomness was never there. That
 makes the trust boundary explicit — **`cm`'s keys are exactly as strong as the OS-and-
-hardware RNG that Apple, Microsoft, and Linux engineer.** Subverting a key means subverting either
+hardware RNG that Apple and Linux engineer.** Subverting a key means subverting either
 
-- the **kernel CSPRNG** — Apple's XNU random subsystem (Secure Enclave TRNG on Apple Silicon), the Linux
-  kernel RNG and its entropy pool, or Windows' CNG (`BCryptGenRandom`); or
+- the **kernel CSPRNG** — Apple's XNU random subsystem (Secure Enclave TRNG on Apple Silicon), or the
+  Linux kernel RNG and its entropy pool; or
 - the **hardware entropy source** itself — the CPU's `RDRAND`/`RDSEED` on Intel/AMD, or
   the on-die true-random generator on Apple Silicon.
 
@@ -174,6 +174,24 @@ top correctness fix is to verify the on-chain output inside `reconcile`.
   mainnet test vectors, but mainnet needs explicit fee control (feerate + RBF/CPFP), a
   trusted/own esplora or node backend, and real-value testing first. Not yet built.
 - **Planned — L2 Lightning.** Not built; under consideration only.
+
+## Platforms
+
+`cm` runs on **macOS and Linux**. The code has no platform-specific branches — the same
+Rust builds on both — so what differs is OS-internal and changes neither behaviour nor
+security:
+
+| | macOS | Linux |
+|---|---|---|
+| Entropy syscall (the 128-bit seed draw) | `getentropy(2)` | `getrandom(2)` |
+| Kernel CSPRNG behind it | XNU random (Secure Enclave TRNG on Apple Silicon) | kernel RNG + entropy pool |
+| Config directory | `~/.config/computermoney/` | `~/.config/computermoney/` |
+| Tunnel transport | `std::net` UDP | `std::net` UDP |
+| Build prerequisite | C toolchain (Xcode CLT / clang) | C toolchain (gcc / cc) |
+
+Both entropy syscalls feed Rust's `getrandom` and are equally a CSPRNG, so the security
+argument above holds identically on either OS. CI builds and tests both on every push.
+Windows is not supported for now (it builds, but `ring` needs `nasm` there).
 
 ## Commands
 
