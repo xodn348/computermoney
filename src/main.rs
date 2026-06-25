@@ -1,0 +1,148 @@
+//! computermoney — milestone 1 CLI.
+//!
+//! Build ladder step 1: turn a mnemonic into a signet Taproot address.
+//! No tunnel, no chain sync yet — just the wallet root the rest builds on.
+
+mod chain;
+mod demo;
+mod ledger;
+mod net;
+mod policy;
+mod protocol;
+mod storage;
+mod tunnel;
+mod wallet;
+
+use wallet::Wallet;
+use zeroize::Zeroizing;
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn ledger_status_label(confs: u32) -> &'static str {
+    match ledger::Status::from_confirmations(confs) {
+        ledger::Status::Pending => "pending",
+        ledger::Status::Soft => "soft",
+        ledger::Status::Final => "final",
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("init") => {
+            let (w, phrase) = Wallet::generate()?;
+            let phrase = Zeroizing::new(phrase); // wipe the new mnemonic on drop
+            println!("address[0]: {}", w.address(0)?);
+            if let Ok(pass) = std::env::var("CM_PASSPHRASE") {
+                let path = storage::seed_path();
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                storage::save_encrypted(phrase.as_str(), &pass, &path)?;
+                println!("seed encrypted -> {}", path.display());
+                eprintln!("\nseed is sealed with CM_PASSPHRASE. lose the passphrase, lose the wallet.");
+            } else {
+                println!("mnemonic: {}", phrase.as_str());
+                eprintln!("\nset CM_PASSPHRASE before init to seal the seed to disk.");
+                eprintln!("until then this mnemonic is the whole wallet — back it up.");
+            }
+        }
+        Some("address") => {
+            let w = storage::load_wallet()?;
+            let idx: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            println!("{}", w.address(idx)?);
+        }
+        Some("balance") => {
+            let w = storage::load_wallet()?;
+            let (ext, int) = w.descriptors();
+            eprintln!("syncing from mutinynet…");
+            let b = chain::balance(&ext, &int)?;
+            println!("confirmed: {} sats", b.confirmed);
+            println!("pending:   {} sats", b.pending);
+        }
+        Some("id") => {
+            let w = storage::load_wallet()?;
+            println!("{}", tunnel::public_key_hex(&w)?);
+            eprintln!("(your identity. a peer pays you with:  cm pay <this>@<your-host:port> <sats>)");
+        }
+        Some("receive") => {
+            let usage = "usage: receive <payer-pubkey-hex> [bind-udp-addr]";
+            let peer = args.get(2).ok_or(usage)?;
+            let bind = args.get(3).map(String::as_str).unwrap_or("0.0.0.0:51820");
+            let w = storage::load_wallet()?;
+            tunnel::serve(&w, &storage::ledger_path(), bind, peer)?;
+        }
+        Some("pay") => {
+            let usage = "usage: pay <peer-pubkey-hex>@<host:port> <sats>";
+            let peer = args.get(2).ok_or(usage)?;
+            let sats: u64 = args.get(3).ok_or(usage)?.parse()?;
+            let (peer_pub, peer_addr) = peer.split_once('@').ok_or(usage)?;
+            let w = storage::load_wallet()?;
+            tunnel::pay(&w, &storage::ledger_path(), peer_addr, peer_pub, sats)?;
+        }
+        Some("demo") => {
+            let amount: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
+            demo::run(amount)?;
+        }
+        Some("confs") => {
+            let txid = args.get(2).ok_or("usage: confs <txid>")?;
+            let n = chain::confirmations(txid)?;
+            println!("{n} confirmations ({})", ledger_status_label(n));
+        }
+        Some("send") => {
+            let to = args.get(2).ok_or("usage: send <address> <sats>")?;
+            let sats: u64 = args.get(3).ok_or("usage: send <address> <sats>")?.parse()?;
+            let w = storage::load_wallet()?;
+            let mut led = ledger::Ledger::open_with_identity(&storage::ledger_path(), w.signing_keypair()?)?;
+            let policy = policy::Policy::load()?;
+            let spent = led.spent_since(ledger::now_unix().saturating_sub(policy::DAILY_WINDOW_SECS));
+            policy.check_amount(sats, spent)?;
+            policy.check_address(to)?;
+            let (ext, int) = w.descriptors();
+            eprintln!("syncing + building + broadcasting…");
+            let txid = chain::send(&ext, &int, to, sats, policy.max_fee_sats)?;
+            led.append(ledger::Entry::Sent {
+                seq: led.next_seq(),
+                txid: txid.to_string(),
+                sats,
+                to: to.to_string(),
+                status: ledger::Status::Pending,
+                at: ledger::now_unix(),
+            })?;
+            println!("txid: {txid}");
+        }
+        Some("policy") => {
+            let p = policy::Policy::load()?;
+            let path = storage::config_path("CM_POLICY", "policy.json");
+            println!("max_payment_sats:  {:?}", p.max_payment_sats);
+            println!("daily_limit_sats:  {:?}", p.daily_limit_sats);
+            println!("max_fee_sats:      {:?}", p.max_fee_sats);
+            println!("blocked_addresses: {}", p.blocked_addresses.len());
+            eprintln!("\npolicy file: {} ({})", path.display(),
+                if path.exists() { "loaded" } else { "absent — no limits" });
+        }
+        _ => {
+            eprintln!("usage:");
+            eprintln!("  cm init                          create a wallet (seals seed if CM_PASSPHRASE)");
+            eprintln!("  cm id                            print your identity (give it to payers)");
+            eprintln!("  cm receive <payer-pubkey> [bind] wait for a payment over WireGuard");
+            eprintln!("  cm pay <pubkey@host:port> <sats> pay a peer over WireGuard");
+            eprintln!();
+            eprintln!("  cm balance                       on-chain balance");
+            eprintln!("  cm address [n]                   a receive address (to fund the wallet)");
+            eprintln!("  cm send <addr> <sats>            raw on-chain send to an address");
+            eprintln!("  cm confs <txid>                  confirmation count for a txid");
+            eprintln!("  cm policy                        show the spend policy (limits/fee/blocklist)");
+            eprintln!("  cm demo [sats]                   end-to-end payment flow in one process");
+            eprintln!();
+            eprintln!("wallet unlock: encrypted seed (CM_PASSPHRASE) or CM_MNEMONIC for the demo.");
+            std::process::exit(2);
+        }
+    }
+    Ok(())
+}
