@@ -20,6 +20,8 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
 use zeroize::Zeroizing;
 
+use bitcoin::Network;
+
 use crate::wallet::Wallet;
 
 const SALT_LEN: usize = 16;
@@ -97,6 +99,58 @@ pub(crate) fn config_path(env_key: &str, file: &str) -> PathBuf {
     p.push("computermoney");
     p.push(file);
     p
+}
+
+/// Active Bitcoin network. `CM_NETWORK` = `mainnet` (default) | `testnet` |
+/// `signet`. Mainnet is the default because that is what real users run; a
+/// demo opts down to testnet/signet explicitly.
+pub fn network() -> Network {
+    match std::env::var("CM_NETWORK")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "testnet" => Network::Testnet,
+        "signet" => Network::Signet,
+        _ => Network::Bitcoin,
+    }
+}
+
+/// Short label for the active network, for human-facing messages.
+pub fn network_label() -> &'static str {
+    match network() {
+        Network::Testnet => "testnet",
+        Network::Signet => "signet",
+        _ => "mainnet",
+    }
+}
+
+/// Esplora endpoint for the active network. `CM_ESPLORA` overrides; otherwise
+/// a public default per network (signet points at mutinynet's 30-second-block
+/// esplora, which is convenient for fast demos).
+pub fn esplora_endpoint() -> String {
+    if let Ok(e) = std::env::var("CM_ESPLORA") {
+        let e = e.trim();
+        if !e.is_empty() {
+            return e.to_string();
+        }
+    }
+    match network() {
+        Network::Testnet => "https://blockstream.info/testnet/api".to_string(),
+        Network::Signet => "https://mutinynet.com/api".to_string(),
+        _ => "https://blockstream.info/api".to_string(),
+    }
+}
+
+/// A block-explorer URL for a txid on the active network, for messages.
+pub fn explorer_tx_url(txid: &str) -> String {
+    let base = match network() {
+        Network::Testnet => "https://mempool.space/testnet/tx/",
+        Network::Signet => "https://mutinynet.com/tx/",
+        _ => "https://mempool.space/tx/",
+    };
+    format!("{base}{txid}")
 }
 
 /// Load the signing wallet. Prefers the encrypted seed file (unlocked

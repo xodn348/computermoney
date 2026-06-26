@@ -27,18 +27,19 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    /// Generate a fresh 12-word wallet on signet (the v1 test network).
-    /// Returns the wallet and the mnemonic phrase to back up.
+    /// Generate a fresh 12-word wallet on the active network (`CM_NETWORK`,
+    /// default mainnet). Returns the wallet and the mnemonic to back up.
     pub fn generate() -> Result<(Self, String), Error> {
         let mnemonic = Mnemonic::generate(12)?;
         let phrase = mnemonic.to_string();
-        let w = Self::from_mnemonic_on(Network::Signet, &phrase)?;
+        let w = Self::from_mnemonic_on(crate::storage::network(), &phrase)?;
         Ok((w, phrase))
     }
 
-    /// Restore a signet wallet from an existing mnemonic.
+    /// Restore a wallet from an existing mnemonic, on the active network
+    /// (`CM_NETWORK`, default mainnet).
     pub fn from_mnemonic(phrase: &str) -> Result<Self, Error> {
-        Self::from_mnemonic_on(Network::Signet, phrase)
+        Self::from_mnemonic_on(crate::storage::network(), phrase)
     }
 
     /// Restore on an explicit network. Used by tests to check BIP-86

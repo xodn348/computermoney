@@ -106,9 +106,9 @@ pub(crate) fn run_payer<W: Wire>(
     eprintln!("[pay] txid {txid}");
 
     wire.send(&Message::Notify { txid: txid.to_string(), sats })?;
-    println!("paid {sats} sats. watch it reach final (3 conf, ~90s on mutinynet):");
+    println!("paid {sats} sats. watch it reach final (3 conf):");
     println!("  cm confs {txid}");
-    println!("  https://mutinynet.com/tx/{txid}");
+    println!("  {}", crate::storage::explorer_tx_url(&txid.to_string()));
     Ok(())
 }
 

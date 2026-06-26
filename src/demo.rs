@@ -71,7 +71,7 @@ pub fn run(amount: u64) -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     // 4. Payee reconciles against the chain — independent of the notify.
-    println!("\n[B] reconciling against mutinynet…");
+    println!("\n[B] reconciling against {}…", crate::storage::network_label());
     let changed = ledger::reconcile(&mut payee_ledger)?;
     let confs = chain::confirmations(&txid.to_string())?;
     println!("[B] {confs} confirmations, {changed} status update(s)");
@@ -79,9 +79,8 @@ pub fn run(amount: u64) -> Result<(), Box<dyn std::error::Error>> {
     println!("[B] work queue (pending txids): {:?}", payee_ledger.pending());
 
     println!(
-        "\nsettlement is live. watch it reach final (3 conf, ~90s on mutinynet):\n  \
-         cm confs {txid}\n  \
-         https://mutinynet.com/tx/{txid}"
+        "\nsettlement is live. watch it reach final (3 conf):\n  cm confs {txid}\n  {}",
+        crate::storage::explorer_tx_url(&txid.to_string())
     );
     Ok(())
 }

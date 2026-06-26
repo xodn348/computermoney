@@ -52,6 +52,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("until then this mnemonic is the whole wallet — back it up.");
             }
         }
+        Some("setup") => {
+            // Zero-to-ready in one command: create+seal a wallet (idempotent),
+            // then print identity, funding address, balance, and how to transact.
+            let label = storage::network_label();
+            let seed_path = storage::seed_path();
+            if !seed_path.exists() {
+                let pass = std::env::var("CM_PASSPHRASE").map_err(|_| {
+                    "cm setup seals your wallet with a passphrase: \
+                     export CM_PASSPHRASE='…' then run `cm setup` again"
+                })?;
+                let (_w, phrase) = Wallet::generate()?;
+                let phrase = Zeroizing::new(phrase);
+                if let Some(dir) = seed_path.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                storage::save_encrypted(phrase.as_str(), &pass, &seed_path)?;
+                println!("✓ wallet created and sealed -> {}", seed_path.display());
+                println!();
+                println!("BACK UP these 12 words — the only recovery if you lose the passphrase:");
+                println!("  {}", phrase.as_str());
+                println!();
+            }
+            let w = storage::load_wallet()?;
+            println!("network:  {label}");
+            println!("identity: {}", tunnel::public_key_hex(&w)?);
+            println!("address:  {}", w.address(0)?);
+            let (ext, int) = w.descriptors();
+            match chain::balance(&ext, &int) {
+                Ok(b) => println!("balance:  {} sats confirmed ({} pending)", b.confirmed, b.pending),
+                Err(_) => println!("balance:  (chain unreachable right now — retry `cm setup`)"),
+            }
+            println!();
+            println!("receive a payment:  cm receive <payer-pubkey>");
+            println!("pay a peer:         cm pay <peer-pubkey>@<host:port> <sats>");
+            if label == "mainnet" {
+                println!("\nfund the address above by sending BTC to it, then run `cm setup` again.");
+            } else {
+                println!("\nfund the address above (signet faucet: https://faucet.mutinynet.com/).");
+            }
+        }
         Some("address") => {
             let w = storage::load_wallet()?;
             let idx: u32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -60,8 +100,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("balance") => {
             let w = storage::load_wallet()?;
             let (ext, int) = w.descriptors();
-            eprintln!("syncing from mutinynet…");
+            eprintln!("syncing from {}…", storage::network_label());
             let b = chain::balance(&ext, &int)?;
+            println!("network:   {}", storage::network_label());
             println!("confirmed: {} sats", b.confirmed);
             println!("pending:   {} sats", b.pending);
         }
@@ -128,6 +169,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             eprintln!("usage:");
+            eprintln!("  cm setup                         create+seal a wallet, show how to fund and transact");
             eprintln!("  cm init                          create a wallet (seals seed if CM_PASSPHRASE)");
             eprintln!("  cm id                            print your identity (give it to payers)");
             eprintln!("  cm receive <payer-pubkey> [bind] wait for a payment over WireGuard");
@@ -141,6 +183,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  cm demo [sats]                   end-to-end payment flow in one process");
             eprintln!();
             eprintln!("wallet unlock: encrypted seed (CM_PASSPHRASE) or CM_MNEMONIC for the demo.");
+            eprintln!("network: CM_NETWORK = mainnet (default) | testnet | signet.");
             std::process::exit(2);
         }
     }
