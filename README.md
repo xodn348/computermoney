@@ -164,15 +164,20 @@ daemon, so `cm` is the autonomous *hands*, not yet the *brain*. (2) Step 5 is in
 issued address for the claimed amount, so a lying `Notify` can record a phantom credit — the
 top correctness fix is to verify the on-chain output inside `reconcile`.
 
+> **Wire-level detail:** [`docs/payment-flow.md`](docs/payment-flow.md) walks through the
+> exact function-by-function order inside `cm pay` and `cm receive` — the two stacked
+> handshakes, where `InvalidMac` comes from, and the message framing.
+
 ## Network status
 
-- **Now — Bitcoin L1 testnet only.** Settlement runs on **mutinynet** (a 30-second-block
-  signet), so 3-confirmation *Final* is ~90 s. It is real on-chain settlement with real
-  Taproot, real keys, and a real signed/broadcast transaction — only the coins are
-  worthless.
-- **Planned — Bitcoin L1 mainnet.** Real BTC. Key derivation already matches the BIP-86
-  mainnet test vectors, but mainnet needs explicit fee control (feerate + RBF/CPFP), a
-  trusted/own esplora or node backend, and real-value testing first. Not yet built.
+- **Default — Bitcoin L1 mainnet.** Real BTC, out of the box. Key derivation matches the
+  BIP-86 mainnet test vectors, and broadcasts use the network's recommended feerate
+  (esplora fee estimates, with a conservative floor). Honest remaining gaps: no RBF/CPFP
+  fee-bumping yet (a tx stuck behind a fee spike can't be re-fee'd from `cm`), and the
+  default esplora endpoint is public (point `CM_ESPLORA` at your own for privacy/trust).
+- **Testing — testnet / signet.** Set `CM_NETWORK=testnet` or `CM_NETWORK=signet` to run
+  the exact same code path with worthless coins. Signet defaults to a 30-second-block
+  endpoint, so 3-confirmation *Final* is ~90 s — this is what the demo uses.
 - **Planned — L2 Lightning.** Not built; under consideration only.
 
 ## Platforms
@@ -199,6 +204,7 @@ WireGuard is the transport, so the surface is two verbs: `receive` and `pay`. A
 peer *is* its public key — `cm pay <pubkey>@<host:port> <sats>` is the whole thing.
 
 ```
+cm setup                          create+seal a wallet, then show identity, fund address, balance
 cm init                           create a wallet (seals the seed if CM_PASSPHRASE is set)
 cm id                             print your identity — the pubkey a peer pays to
 cm receive <payer-pubkey> [bind]  wait for a payment over WireGuard (bind 0.0.0.0:51820)
@@ -213,6 +219,8 @@ cm demo [sats]                    full end-to-end payment flow in one process
 ```
 
 Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or `CM_MNEMONIC` for the demo.
+Network: `CM_NETWORK` = `mainnet` (default) | `testnet` | `signet`; `CM_ESPLORA` overrides
+the esplora endpoint.
 Config lives under `~/.config/computermoney/` (`seed.enc`, `ledger.jsonl`,
 `policy.json`); override with `CM_SEED` / `CM_LEDGER` / `CM_POLICY`.
 
