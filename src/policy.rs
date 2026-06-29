@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
+use bitcoin::Network;
 use serde::Deserialize;
 
 use crate::storage;
@@ -43,6 +44,8 @@ pub enum PolicyError {
     DailyLimitExceeded { attempted: u64, spent: u64, cap: u64 },
     FeeTooHigh { fee: u64, cap: u64 },
     AddressBlocked { address: String },
+    /// Mainnet with no effective spend cap — the fail-closed guard tripped.
+    MainnetUncapped,
 }
 
 impl fmt::Display for PolicyError {
@@ -62,11 +65,32 @@ impl fmt::Display for PolicyError {
             PolicyError::AddressBlocked { address } => {
                 write!(f, "destination {address} is on the blocklist")
             }
+            PolicyError::MainnetUncapped => write!(
+                f,
+                "mainnet send refused: policy has no spend cap (set max_payment_sats or daily_limit_sats in policy.json)"
+            ),
         }
     }
 }
 
 impl Error for PolicyError {}
+
+/// Mainnet fail-closed guard. On mainnet, refuse a broadcast unless the policy
+/// sets at least one spend cap (per-payment or daily). An absent or empty
+/// `policy.json` deserializes to a permissive [`Policy::default`] — fine for a
+/// signet/testnet demo, but on real money an uncapped wallet is a footgun, so
+/// we fail closed. Keyed on the *effective* caps, not on the file's existence
+/// (`{}` is unlimited and is rejected). This is the single definition of the
+/// guard; every send path routes through `chain::send`, which calls it.
+pub fn ensure_mainnet_capped(network: Network, policy: &Policy) -> Result<(), PolicyError> {
+    if network == Network::Bitcoin
+        && policy.max_payment_sats.is_none()
+        && policy.daily_limit_sats.is_none()
+    {
+        return Err(PolicyError::MainnetUncapped);
+    }
+    Ok(())
+}
 
 impl Policy {
     /// Load the policy file, or a permissive default if none exists.
@@ -171,6 +195,32 @@ mod tests {
         let p = policy();
         assert!(p.check_fee(5_000).is_ok());
         assert_eq!(p.check_fee(5_001), Err(PolicyError::FeeTooHigh { fee: 5_001, cap: 5_000 }));
+    }
+
+    #[test]
+    fn mainnet_uncapped_policy_is_refused() {
+        // An empty-braces policy.json deserializes to the permissive default;
+        // on mainnet the guard must fail closed with a typed error.
+        assert_eq!(
+            ensure_mainnet_capped(Network::Bitcoin, &Policy::default()),
+            Err(PolicyError::MainnetUncapped)
+        );
+    }
+
+    #[test]
+    fn mainnet_with_any_cap_is_allowed() {
+        // Either cap alone satisfies the guard.
+        let p = Policy { max_payment_sats: Some(100_000), ..Policy::default() };
+        assert!(ensure_mainnet_capped(Network::Bitcoin, &p).is_ok());
+        let q = Policy { daily_limit_sats: Some(250_000), ..Policy::default() };
+        assert!(ensure_mainnet_capped(Network::Bitcoin, &q).is_ok());
+    }
+
+    #[test]
+    fn non_mainnet_stays_permissive() {
+        // Signet/testnet demos run capless by design — the guard never trips.
+        assert!(ensure_mainnet_capped(Network::Signet, &Policy::default()).is_ok());
+        assert!(ensure_mainnet_capped(Network::Testnet, &Policy::default()).is_ok());
     }
 
     #[test]

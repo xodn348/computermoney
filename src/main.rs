@@ -6,6 +6,7 @@
 mod chain;
 mod demo;
 mod ledger;
+mod mcp;
 mod net;
 mod policy;
 mod protocol;
@@ -130,6 +131,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let amount: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
             demo::run(amount)?;
         }
+        Some("mcp") => {
+            // Run the stdio MCP server: an AI agent drives cm_send / cm_balance
+            // over JSON-RPC. The wallet unlocks once and serves until stdin closes.
+            mcp::run()?;
+        }
         Some("confs") => {
             let txid = args.get(2).ok_or("usage: confs <txid>")?;
             let n = chain::confirmations(txid)?;
@@ -181,6 +187,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  cm confs <txid>                  confirmation count for a txid");
             eprintln!("  cm policy                        show the spend policy (limits/fee/blocklist)");
             eprintln!("  cm demo [sats]                   end-to-end payment flow in one process");
+            eprintln!("  cm mcp                           stdio MCP server (cm_send, cm_balance) for AI agents");
             eprintln!();
             eprintln!("wallet unlock: encrypted seed (CM_PASSPHRASE) or CM_MNEMONIC for the demo.");
             eprintln!("network: CM_NETWORK = mainnet (default) | testnet | signet.");

@@ -57,6 +57,12 @@ pub fn send(
     sats: u64,
     max_fee_sats: Option<u64>,
 ) -> Result<Txid, Box<dyn std::error::Error>> {
+    // Mainnet fail-closed guard. This is the single chokepoint every send
+    // path flows through (cm send, cm pay, cm demo, cm mcp), so the predicate
+    // lives in exactly one place. Refuse a mainnet broadcast under an uncapped
+    // policy before any network, signing, or coin selection happens.
+    crate::policy::ensure_mainnet_capped(storage::network(), &crate::policy::Policy::load()?)?;
+
     let mut wallet = build_wallet(ext_desc, int_desc)?;
 
     let client = esplora_client::Builder::new(&storage::esplora_endpoint()).build_blocking();
