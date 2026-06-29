@@ -7,6 +7,18 @@ identities and pay each other in Bitcoin. They coordinate over a WireGuard tunne
 settle on Bitcoin L1 (Taproot) — one chain transaction per payment, no channels. The
 trust model is WireGuard's: **the key is the identity, not the IP.**
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.sh | sh
+```
+
+One line builds and installs the **`cm`** binary — which includes the **`cm mcp`** server —
+from source (needs a [Rust toolchain](https://rustup.rs) and a C compiler). No-script
+equivalent: `cargo install --git https://github.com/xodn348/computermoney --bin cm`. After
+installing, register the MCP server with your AI client — see
+[MCP server](#mcp-server--natural-language-payments).
+
 ## What `cm` is
 
 `cm` is **an agent-operated, self-custodial Bitcoin L1 wallet.** Each agent runs its
@@ -242,9 +254,9 @@ else — **the seed and passphrase are never tool arguments.** The wallet is unl
 startup (a single KDF pass) and held for the process lifetime, so each call is fast and the
 secret never crosses the tool boundary.
 
-**Register it** in your MCP client config — `.mcp.json` (Claude Code) or
-`claude_desktop_config.json` (Claude Desktop) — pointing at the `cm` binary with `mcp`, plus
-the unlock + network in the env. Signet demo with a plaintext mnemonic:
+Once `cm` is [installed](#install), **register it** in your MCP client config — `.mcp.json`
+(Claude Code) or `claude_desktop_config.json` (Claude Desktop) — pointing at the `cm` binary
+with `mcp`, plus the unlock + network in the env. Signet demo with a plaintext mnemonic:
 
 ```json
 {
