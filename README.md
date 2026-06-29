@@ -216,6 +216,7 @@ cm send <addr> <sats>             raw on-chain send to an address (policy-gated)
 cm confs <txid>                   confirmation count for a txid
 cm policy                         show the active spend policy (limits / fee / blocklist)
 cm demo [sats]                    full end-to-end payment flow in one process
+cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-agent clients
 ```
 
 Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or `CM_MNEMONIC` for the demo.
@@ -223,6 +224,66 @@ Network: `CM_NETWORK` = `mainnet` (default) | `testnet` | `signet`; `CM_ESPLORA`
 the esplora endpoint.
 Config lives under `~/.config/computermoney/` (`seed.enc`, `ledger.jsonl`,
 `policy.json`); override with `CM_SEED` / `CM_LEDGER` / `CM_POLICY`.
+
+## MCP server — natural-language payments
+
+`cm mcp` runs `cm` as a **[Model Context Protocol](https://modelcontextprotocol.io) server**
+over stdio, so any MCP client (Claude Code, Claude Desktop, or your own agent) can pay
+Bitcoin from a plain instruction — *"send 5000 sats to tb1p…"* — with no shell, no flags, no
+key handling. It exposes exactly two tools and nothing else:
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `cm_send` | `address` (string), `sats` (integer ≥ 1) | policy-gates, builds, Schnorr-signs, and broadcasts one on-chain payment; returns the txid + explorer URL |
+| `cm_balance` | *(none)* | confirmed + pending balance on the active network |
+
+`cm_send` is the same code path as `cm send`: the agent supplies `{address, sats}` and nothing
+else — **the seed and passphrase are never tool arguments.** The wallet is unlocked **once** at
+startup (a single KDF pass) and held for the process lifetime, so each call is fast and the
+secret never crosses the tool boundary.
+
+**Register it** in your MCP client config — `.mcp.json` (Claude Code) or
+`claude_desktop_config.json` (Claude Desktop) — pointing at the `cm` binary with `mcp`, plus
+the unlock + network in the env. Signet demo with a plaintext mnemonic:
+
+```json
+{
+  "mcpServers": {
+    "computermoney": {
+      "command": "/abs/path/to/cm",
+      "args": ["mcp"],
+      "env": {
+        "CM_NETWORK": "signet",
+        "CM_MNEMONIC": "<your 12-word signet mnemonic>",
+        "CM_POLICY": "/abs/path/to/policy.json"
+      }
+    }
+  }
+}
+```
+
+For **mainnet** (real BTC), unlock the sealed seed with a passphrase instead of a plaintext
+mnemonic, and **set a spend cap** — on mainnet `cm` refuses to broadcast unless `policy.json`
+carries an effective limit (`max_payment_sats` or `daily_limit_sats`):
+
+```json
+"env": {
+  "CM_NETWORK": "mainnet",
+  "CM_PASSPHRASE": "<passphrase that seals seed.enc>",
+  "CM_POLICY": "/abs/path/to/policy.json"
+}
+```
+
+```json
+// policy.json — limits the agent cannot talk its way around
+{ "max_payment_sats": 50000, "daily_limit_sats": 200000 }
+```
+
+That mainnet cap is **fail-closed**: an absent or empty policy means *unlimited*, so on mainnet
+a cap-less send is rejected before any signing — a guard the agent can't bypass because it sits
+at the single on-chain chokepoint (`chain::send`) every send path funnels through.
+Signet/testnet stay permissive for the demo. The server speaks JSON-RPC 2.0 on **stdout only**;
+all diagnostics go to stderr, so the stream stays clean for the client.
 
 ## License
 
