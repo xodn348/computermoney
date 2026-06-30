@@ -13,11 +13,16 @@ trust model is WireGuard's: **the key is the identity, not the IP.**
 curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.sh | sh
 ```
 
-One line builds and installs the **`cm`** binary — which includes the **`cm mcp`** server —
-from source (needs a [Rust toolchain](https://rustup.rs) and a C compiler). No-script
-equivalent: `cargo install --git https://github.com/xodn348/computermoney --bin cm`. After
-installing, register the MCP server with your AI client — see
-[MCP server](#mcp-server--natural-language-payments).
+One line takes a fresh machine to a working payment agent. It builds and installs the **`cm`**
+binary from source (needs a [Rust toolchain](https://rustup.rs) and a C compiler), and — if
+**Claude Code** is detected — registers the **`cm mcp`** server on a throwaway **signet** demo
+wallet, with **zero secrets to type**. Restart Claude Code and say *"send 5000 sats to …"*;
+fund the printed signet address from the [faucet](https://faucet.mutinynet.com/).
+
+No-script equivalent (binary only):
+`cargo install --git https://github.com/xodn348/computermoney --bin cm`.
+**Mainnet** (real BTC) is never auto-wired — seal a seed and set a spend cap, then register with
+`CM_NETWORK=mainnet`; see [MCP server](#mcp-server--natural-language-payments).
 
 ## What `cm` is
 
@@ -254,9 +259,10 @@ else — **the seed and passphrase are never tool arguments.** The wallet is unl
 startup (a single KDF pass) and held for the process lifetime, so each call is fast and the
 secret never crosses the tool boundary.
 
-Once `cm` is [installed](#install), **register it** in your MCP client config — `.mcp.json`
-(Claude Code) or `claude_desktop_config.json` (Claude Desktop) — pointing at the `cm` binary
-with `mcp`, plus the unlock + network in the env. Signet demo with a plaintext mnemonic:
+The [installer](#install) already does this for Claude Code on a signet demo wallet. To wire it
+**manually** — Claude Desktop, another client, or mainnet — point your MCP config (`.mcp.json`
+or `claude_desktop_config.json`) at the `cm` binary with `mcp`, plus the unlock + network in the
+env. Signet demo with a plaintext mnemonic:
 
 ```json
 {
