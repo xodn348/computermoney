@@ -5,8 +5,11 @@
 //! routed to stderr so stdout stays a clean protocol stream. Two tools are
 //! exposed — `cm_send` (broadcast a payment) and `cm_balance` (on-chain
 //! balance) — each reusing the exact CLI recipes so the agent path and the
-//! human path move money identically. The wallet is unlocked ONCE at startup
-//! and held for the process lifetime; the passphrase is never a tool argument.
+//! human path move money identically. The wallet is unlocked lazily: the
+//! server starts (and completes the MCP handshake) even with no wallet
+//! available, each tool call retries the unlock until it succeeds, and the
+//! unlocked wallet is then held for the process lifetime. The passphrase is
+//! never a tool argument.
 //!
 //! Hand-rolled on serde_json alone (no rmcp/tokio): the esplora client is
 //! blocking, so a synchronous read → dispatch → write loop is the whole server.
@@ -23,14 +26,26 @@ use crate::{chain, ledger, policy, storage, wallet};
 /// fallback advertised when the client omits one.
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Run the stdio MCP server until stdin closes. The wallet is unlocked exactly
-/// once here (via `CM_PASSPHRASE`/`CM_MNEMONIC`) and reused for every call.
+/// Run the stdio MCP server until stdin closes. The wallet is unlocked at
+/// most once (via `CM_PASSPHRASE`/`CM_MNEMONIC`) and reused for every call —
+/// but a missing wallet must not kill the server: the client marks a dead
+/// process "failed to connect" with no explanation, while a live server can
+/// return a readable tool error. It also lets a wallet created AFTER the
+/// session started (`cm init` / `cm setup`) be picked up on the next call.
 pub fn run() -> Result<(), Box<dyn Error>> {
-    let wallet = storage::load_wallet()?;
-    eprintln!(
-        "cm mcp: wallet unlocked on {}; serving cm_send + cm_balance over stdio",
-        storage::network_label()
-    );
+    let mut wallet = match storage::load_wallet() {
+        Ok(w) => {
+            eprintln!(
+                "cm mcp: wallet unlocked on {}; serving cm_send + cm_balance over stdio",
+                storage::network_label()
+            );
+            Some(w)
+        }
+        Err(e) => {
+            eprintln!("cm mcp: no wallet yet ({e}); serving anyway — tool calls will retry the unlock");
+            None
+        }
+    };
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
@@ -64,14 +79,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             eprintln!("cm mcp: notification {}", method_of(&msg));
             continue;
         };
-        let frame = dispatch(&wallet, id, &msg);
+        let frame = dispatch(&mut wallet, id, &msg);
         write_frame(&mut writer, &frame)?;
     }
     Ok(())
 }
 
 /// Route an id-bearing request to its handler and return the frame to emit.
-fn dispatch(wallet: &wallet::Wallet, id: Value, msg: &Value) -> Value {
+fn dispatch(wallet: &mut Option<wallet::Wallet>, id: Value, msg: &Value) -> Value {
     let method = method_of(msg);
     let params = msg.get("params");
     match method {
@@ -131,14 +146,30 @@ fn tools_list_result() -> Value {
 
 /// `tools/call` dispatch. An unknown tool name or missing name is a protocol
 /// error (-32602); tool execution failures are returned as `isError` content.
-fn tools_call(wallet: &wallet::Wallet, id: Value, params: Option<&Value>) -> Value {
+/// The wallet unlock is retried here if startup found none — "no wallet" is a
+/// tool-level failure the agent can read and relay, not a dead server.
+fn tools_call(wallet: &mut Option<wallet::Wallet>, id: Value, params: Option<&Value>) -> Value {
     let name = params.and_then(|p| p.get("name")).and_then(Value::as_str);
     let args = params.and_then(|p| p.get("arguments"));
+    if !matches!(name, Some("cm_send") | Some("cm_balance")) {
+        return match name {
+            Some(other) => error_frame(id, -32602, &format!("unknown tool: {other}")),
+            None => error_frame(id, -32602, "missing tool name"),
+        };
+    }
+    let w = match wallet {
+        Some(w) => w,
+        None => match storage::load_wallet() {
+            Ok(loaded) => {
+                eprintln!("cm mcp: wallet unlocked on {}", storage::network_label());
+                wallet.insert(loaded)
+            }
+            Err(e) => return tool_err(id, &e.to_string()),
+        },
+    };
     match name {
-        Some("cm_send") => call_send(wallet, id, args),
-        Some("cm_balance") => call_balance(wallet, id),
-        Some(other) => error_frame(id, -32602, &format!("unknown tool: {other}")),
-        None => error_frame(id, -32602, "missing tool name"),
+        Some("cm_send") => call_send(w, id, args),
+        _ => call_balance(w, id),
     }
 }
 
