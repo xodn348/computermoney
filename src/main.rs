@@ -137,7 +137,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let peer = args.get(2).ok_or(usage)?;
             let bind = args.get(3).map(String::as_str).unwrap_or("0.0.0.0:51820");
             let w = storage::load_wallet()?;
-            tunnel::serve(&w, &storage::ledger_path(), bind, peer)?;
+            tunnel::serve(&w, &storage::ledger_path(&w)?, bind, peer)?;
         }
         Some("pay") => {
             let usage = "usage: pay <peer-pubkey-hex>@<host:port> <sats>";
@@ -145,7 +145,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let sats: u64 = args.get(3).ok_or(usage)?.parse()?;
             let (peer_pub, peer_addr) = peer.split_once('@').ok_or(usage)?;
             let w = storage::load_wallet()?;
-            tunnel::pay(&w, &storage::ledger_path(), peer_addr, peer_pub, sats)?;
+            tunnel::pay(&w, &storage::ledger_path(&w)?, peer_addr, peer_pub, sats)?;
         }
         Some("demo") => {
             let amount: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
@@ -165,7 +165,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let to = args.get(2).ok_or("usage: send <address> <sats>")?;
             let sats: u64 = args.get(3).ok_or("usage: send <address> <sats>")?.parse()?;
             let w = storage::load_wallet()?;
-            let mut led = ledger::Ledger::open_with_identity(&storage::ledger_path(), w.signing_keypair()?)?;
+            let mut led = ledger::Ledger::open_with_identity(&storage::ledger_path(&w)?, w.signing_keypair()?)?;
             let policy = policy::Policy::load()?;
             let spent = led.spent_since(ledger::now_unix().saturating_sub(policy::DAILY_WINDOW_SECS));
             policy.check_amount(sats, spent)?;

@@ -156,7 +156,7 @@ the Bitcoin network* (required to actually settle).
    │  every node (Bitcoin Core included) validates the tx under the same    │
    │  rules and agrees independently.  0 / 1 / 3 confs = Pending/Soft/Final  │
    └────────────────────────────────────────────────────────────────────────┘
-        │  each side records the result in its own Schnorr-signed ledger.jsonl
+        │  each side records the result in its own Schnorr-signed ledger file
 ```
 
 1. **A asks for an address.** A opens the tunnel to B's WireGuard public key (Noise_IK,
@@ -171,8 +171,8 @@ the Bitcoin network* (required to actually settle).
 5. **B reconciles against the chain.** B trusts the chain, not the message: `reconcile`
    queries confirmations; 3 confs = Final. Global consensus validates the tx — B's standard
    BIP-86 address is honored by every node, Bitcoin Core included. *Internet required.*
-6. **Both record it** in their own signed append-only `ledger.jsonl` (balance, work queue,
-   crash recovery).
+6. **Both record it** in their own signed append-only ledger (`ledger-<pk8>.jsonl`, named
+   by each agent's signing pubkey — balance, work queue, crash recovery).
 
 **Two honest gaps.** (1) The *decision* to pay — the trigger for step 1 — lives outside
 `cm` today (a human, or an agent that execs `cm pay`); `cm receive` is already an unattended
@@ -239,8 +239,10 @@ cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-
 Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or `CM_MNEMONIC` for the demo.
 Network: `CM_NETWORK` = `mainnet` (default) | `testnet` | `signet`; `CM_ESPLORA` overrides
 the esplora endpoint.
-Config lives under `~/.config/computermoney/` (`seed.enc`, `ledger.jsonl`,
-`policy.json`); override with `CM_SEED` / `CM_LEDGER` / `CM_POLICY`.
+Config lives under `~/.config/computermoney/` (`seed.enc`, `ledger-<pk8>.jsonl`,
+`policy.json`); override with `CM_SEED` / `CM_LEDGER` / `CM_POLICY`. The ledger file
+is named by the wallet's ledger-signing pubkey (first 8 hex chars), so two identities
+on one machine never share — and never cross-sign — a ledger.
 
 ## MCP server — natural-language payments
 

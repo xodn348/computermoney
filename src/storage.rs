@@ -107,9 +107,23 @@ pub fn save_plaintext_mnemonic(mnemonic: &str) -> Result<PathBuf, Box<dyn Error>
 }
 
 /// Where this agent's append-only ledger lives. `CM_LEDGER` overrides;
-/// otherwise `~/.config/computermoney/ledger.jsonl`.
-pub fn ledger_path() -> PathBuf {
-    config_path("CM_LEDGER", "ledger.jsonl")
+/// otherwise `~/.config/computermoney/ledger-<pk8>.jsonl`, keyed by the
+/// wallet's ledger-signing pubkey. Ledger entries are identity-signed and
+/// `open_with_identity` refuses foreign signatures, so two identities must
+/// never share a file — the per-identity default enforces that (a fixed
+/// `ledger.jsonl` let two wallets on one machine interleave signatures,
+/// bricking the file for every later open).
+pub fn ledger_path(wallet: &Wallet) -> Result<PathBuf, Box<dyn Error>> {
+    if let Ok(p) = std::env::var("CM_LEDGER") {
+        return Ok(PathBuf::from(p));
+    }
+    Ok(default_config_file(&ledger_file_name(wallet)?))
+}
+
+/// `ledger-<pk8>.jsonl` — the per-identity default ledger filename.
+fn ledger_file_name(wallet: &Wallet) -> Result<String, Box<dyn Error>> {
+    let pk = wallet.signing_pubkey()?.to_string();
+    Ok(format!("ledger-{}.jsonl", &pk[..8]))
 }
 
 /// Resolve an env override or `~/.config/computermoney/<file>`.
@@ -117,6 +131,11 @@ pub(crate) fn config_path(env_key: &str, file: &str) -> PathBuf {
     if let Ok(p) = std::env::var(env_key) {
         return PathBuf::from(p);
     }
+    default_config_file(file)
+}
+
+/// `~/.config/computermoney/<file>`, with no env override.
+fn default_config_file(file: &str) -> PathBuf {
     let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
     p.push(".config");
     p.push("computermoney");
@@ -247,6 +266,20 @@ mod tests {
         std::fs::write(&path, &data).unwrap();
         assert!(load_encrypted("pass", &path).is_err(), "AEAD must reject tampering");
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn ledger_file_name_is_per_identity() {
+        let a = Wallet::from_mnemonic(MNEMONIC).unwrap();
+        let (b, _) = Wallet::generate().unwrap();
+        let na = ledger_file_name(&a).unwrap();
+        let nb = ledger_file_name(&b).unwrap();
+        assert_ne!(na, nb, "two identities must never share a ledger file");
+        assert_eq!(na, ledger_file_name(&a).unwrap(), "same identity, same name");
+        assert!(
+            na.starts_with("ledger-") && na.ends_with(".jsonl"),
+            "unexpected ledger filename: {na}"
+        );
     }
 
     #[test]

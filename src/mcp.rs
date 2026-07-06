@@ -200,7 +200,7 @@ fn call_send(wallet: &wallet::Wallet, id: Value, args: Option<&Value>) -> Value 
 /// entry. Returns the human text the agent reads back.
 fn send_payment(wallet: &wallet::Wallet, to: &str, sats: u64) -> Result<String, Box<dyn Error>> {
     let mut led =
-        ledger::Ledger::open_with_identity(storage::ledger_path(), wallet.signing_keypair()?)?;
+        ledger::Ledger::open_with_identity(storage::ledger_path(wallet)?, wallet.signing_keypair()?)?;
     let policy = policy::Policy::load()?;
     let spent = led.spent_since(ledger::now_unix().saturating_sub(policy::DAILY_WINDOW_SECS));
     policy.check_amount(sats, spent)?;
