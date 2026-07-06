@@ -83,6 +83,29 @@ pub fn seed_path() -> PathBuf {
     config_path("CM_SEED", "seed.enc")
 }
 
+/// Where the plaintext mnemonic lives in the no-passphrase test-network
+/// flow: `mnemonic`, next to the seed file (so `CM_SEED` relocates both).
+/// Real funds never touch this path — `load_wallet` refuses it on mainnet.
+pub fn mnemonic_path() -> PathBuf {
+    seed_path().with_file_name("mnemonic")
+}
+
+/// Persist a plaintext mnemonic (owner-only 0600) for the no-passphrase
+/// test-network flow. Callers gate on a non-mainnet network.
+pub fn save_plaintext_mnemonic(mnemonic: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = mnemonic_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, format!("{mnemonic}\n"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(path)
+}
+
 /// Where this agent's append-only ledger lives. `CM_LEDGER` overrides;
 /// otherwise `~/.config/computermoney/ledger.jsonl`.
 pub fn ledger_path() -> PathBuf {
@@ -154,8 +177,9 @@ pub fn explorer_tx_url(txid: &str) -> String {
 }
 
 /// Load the signing wallet. Prefers the encrypted seed file (unlocked
-/// with `CM_PASSPHRASE`); falls back to a plaintext `CM_MNEMONIC` for the
-/// signet demo only. Errors if neither is available.
+/// with `CM_PASSPHRASE`); falls back to a plaintext `CM_MNEMONIC` env var,
+/// then to the plaintext mnemonic file — both for test networks only.
+/// Errors if nothing is available.
 pub fn load_wallet() -> Result<Wallet, Box<dyn Error>> {
     let path = seed_path();
     if path.exists() {
@@ -168,7 +192,19 @@ pub fn load_wallet() -> Result<Wallet, Box<dyn Error>> {
         let phrase = Zeroizing::new(phrase); // wipe our copy on drop
         return Ok(Wallet::from_mnemonic(phrase.as_str())?);
     }
-    Err("no wallet: run `cm init` with CM_PASSPHRASE set, or export CM_MNEMONIC for the demo".into())
+    let mn_path = mnemonic_path();
+    if mn_path.exists() {
+        // A bare key on disk is a test-network convenience, never a way to
+        // hold real funds: on mainnet it is refused, not silently used.
+        if network() == Network::Bitcoin {
+            return Err("plaintext mnemonic file found, refused on mainnet — \
+                        seal it with `cm init` + CM_PASSPHRASE instead"
+                .into());
+        }
+        let phrase = Zeroizing::new(std::fs::read_to_string(&mn_path)?);
+        return Ok(Wallet::from_mnemonic(phrase.as_str())?);
+    }
+    Err("no wallet: run `cm init` (or `cm setup`) first — on mainnet set CM_PASSPHRASE to seal the seed".into())
 }
 
 #[cfg(test)]

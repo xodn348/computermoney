@@ -47,6 +47,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 storage::save_encrypted(phrase.as_str(), &pass, &path)?;
                 println!("seed encrypted -> {}", path.display());
                 eprintln!("\nseed is sealed with CM_PASSPHRASE. lose the passphrase, lose the wallet.");
+            } else if storage::network_label() != "mainnet" {
+                let path = storage::save_plaintext_mnemonic(phrase.as_str())?;
+                println!("mnemonic: {}", phrase.as_str());
+                println!("mnemonic saved (plaintext) -> {}", path.display());
+                eprintln!("\n{} wallet stored unencrypted — fine for test coins.", storage::network_label());
+                eprintln!("set CM_PASSPHRASE before init to seal it instead.");
             } else {
                 println!("mnemonic: {}", phrase.as_str());
                 eprintln!("\nset CM_PASSPHRASE before init to seal the seed to disk.");
@@ -54,26 +60,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some("setup") => {
-            // Zero-to-ready in one command: create+seal a wallet (idempotent),
-            // then print identity, funding address, balance, and how to transact.
+            // Zero-to-ready in one command: create a wallet (idempotent),
+            // then print identity, funding address, balance, and how to
+            // transact. With CM_PASSPHRASE the seed is sealed to disk; on a
+            // test network without one, the mnemonic is stored plaintext
+            // (mainnet insists on the passphrase).
             let label = storage::network_label();
             let seed_path = storage::seed_path();
-            if !seed_path.exists() {
-                let pass = std::env::var("CM_PASSPHRASE").map_err(|_| {
-                    "cm setup seals your wallet with a passphrase: \
-                     export CM_PASSPHRASE='…' then run `cm setup` again"
-                })?;
+            if !seed_path.exists() && !storage::mnemonic_path().exists() {
+                let pass = std::env::var("CM_PASSPHRASE");
+                if pass.is_err() && label == "mainnet" {
+                    return Err("cm setup seals your wallet with a passphrase: \
+                                export CM_PASSPHRASE='…' then run `cm setup` again"
+                        .into());
+                }
                 let (_w, phrase) = Wallet::generate()?;
                 let phrase = Zeroizing::new(phrase);
-                if let Some(dir) = seed_path.parent() {
-                    std::fs::create_dir_all(dir)?;
+                if let Ok(pass) = pass {
+                    if let Some(dir) = seed_path.parent() {
+                        std::fs::create_dir_all(dir)?;
+                    }
+                    storage::save_encrypted(phrase.as_str(), &pass, &seed_path)?;
+                    println!("✓ wallet created and sealed -> {}", seed_path.display());
+                    println!();
+                    println!("BACK UP these 12 words — the only recovery if you lose the passphrase:");
+                    println!("  {}", phrase.as_str());
+                    println!();
+                } else {
+                    let path = storage::save_plaintext_mnemonic(phrase.as_str())?;
+                    println!("✓ wallet created -> {} (plaintext mnemonic, {label} test coins)", path.display());
+                    println!();
+                    println!("BACK UP these 12 words:");
+                    println!("  {}", phrase.as_str());
+                    println!();
                 }
-                storage::save_encrypted(phrase.as_str(), &pass, &seed_path)?;
-                println!("✓ wallet created and sealed -> {}", seed_path.display());
-                println!();
-                println!("BACK UP these 12 words — the only recovery if you lose the passphrase:");
-                println!("  {}", phrase.as_str());
-                println!();
             }
             let w = storage::load_wallet()?;
             println!("network:  {label}");
