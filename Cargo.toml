@@ -18,6 +18,9 @@ rand = "0.8"
 zeroize = "1"
 boringtun = { version = "0.7.1", default-features = false }
 
+[dev-dependencies]
+sha2 = "0.10" # examples/key-genesis.rs: show the BIP-39 checksum bits
+
 [[bin]]
 name = "cm"
 path = "src/main.rs"
