@@ -4,7 +4,6 @@
 //! No tunnel, no chain sync yet — just the wallet root the rest builds on.
 
 mod chain;
-mod demo;
 mod ledger;
 mod mcp;
 mod net;
@@ -36,68 +35,67 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("init") => {
+            // Each init creates a NEW identity in its own directory —
+            // running it again never overwrites an existing wallet.
             let (w, phrase) = Wallet::generate()?;
             let phrase = Zeroizing::new(phrase); // wipe the new mnemonic on drop
+            let id = w.id_hex()?;
+            println!("identity: {id}");
             println!("address[0]: {}", w.address(0)?);
-            if let Ok(pass) = std::env::var("CM_PASSPHRASE") {
-                let path = storage::seed_path();
-                if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                storage::save_encrypted(phrase.as_str(), &pass, &path)?;
-                println!("seed encrypted -> {}", path.display());
-                eprintln!("\nseed is sealed with CM_PASSPHRASE. lose the passphrase, lose the wallet.");
-            } else if storage::network_label() != "mainnet" {
-                let path = storage::save_plaintext_mnemonic(phrase.as_str())?;
-                println!("mnemonic: {}", phrase.as_str());
-                println!("mnemonic saved (plaintext) -> {}", path.display());
-                eprintln!("\n{} wallet stored unencrypted — fine for test coins.", storage::network_label());
-                eprintln!("set CM_PASSPHRASE before init to seal it instead.");
-            } else {
+            let pass = std::env::var("CM_PASSPHRASE").ok();
+            if pass.is_none() && storage::network_label() == "mainnet" {
                 println!("mnemonic: {}", phrase.as_str());
                 eprintln!("\nset CM_PASSPHRASE before init to seal the seed to disk.");
                 eprintln!("until then this mnemonic is the whole wallet — back it up.");
+            } else {
+                let dir = storage::save_new_wallet(&w, phrase.as_str(), pass.as_deref())?;
+                if pass.is_some() {
+                    println!("seed encrypted -> {}", dir.join("seed.enc").display());
+                    eprintln!("\nseed is sealed with CM_PASSPHRASE. lose the passphrase, lose the wallet.");
+                } else {
+                    println!("mnemonic: {}", phrase.as_str());
+                    println!("mnemonic saved (plaintext) -> {}", dir.join("mnemonic").display());
+                    eprintln!("\n{} wallet stored unencrypted — fine for test coins.", storage::network_label());
+                    eprintln!("set CM_PASSPHRASE before init to seal it instead.");
+                }
+                if storage::wallet_ids().len() > 1 {
+                    eprintln!("\nseveral identities live here now — use this one with:");
+                    eprintln!("  export CM_ID={}", &id[..8]);
+                }
             }
         }
         Some("setup") => {
-            // Zero-to-ready in one command: create a wallet (idempotent),
+            // Zero-to-ready in one command: create a wallet if none exists,
             // then print identity, funding address, balance, and how to
             // transact. With CM_PASSPHRASE the seed is sealed to disk; on a
             // test network without one, the mnemonic is stored plaintext
-            // (mainnet insists on the passphrase).
+            // (mainnet insists on the passphrase). More identities: cm init.
             let label = storage::network_label();
-            let seed_path = storage::seed_path();
-            if !seed_path.exists() && !storage::mnemonic_path().exists() {
-                let pass = std::env::var("CM_PASSPHRASE");
-                if pass.is_err() && label == "mainnet" {
+            if storage::wallet_ids().is_empty() {
+                let pass = std::env::var("CM_PASSPHRASE").ok();
+                if pass.is_none() && label == "mainnet" {
                     return Err("cm setup seals your wallet with a passphrase: \
                                 export CM_PASSPHRASE='…' then run `cm setup` again"
                         .into());
                 }
-                let (_w, phrase) = Wallet::generate()?;
+                let (w, phrase) = Wallet::generate()?;
                 let phrase = Zeroizing::new(phrase);
-                if let Ok(pass) = pass {
-                    if let Some(dir) = seed_path.parent() {
-                        std::fs::create_dir_all(dir)?;
-                    }
-                    storage::save_encrypted(phrase.as_str(), &pass, &seed_path)?;
-                    println!("✓ wallet created and sealed -> {}", seed_path.display());
+                let dir = storage::save_new_wallet(&w, phrase.as_str(), pass.as_deref())?;
+                if pass.is_some() {
+                    println!("✓ wallet created and sealed -> {}", dir.join("seed.enc").display());
                     println!();
                     println!("BACK UP these 12 words — the only recovery if you lose the passphrase:");
-                    println!("  {}", phrase.as_str());
-                    println!();
                 } else {
-                    let path = storage::save_plaintext_mnemonic(phrase.as_str())?;
-                    println!("✓ wallet created -> {} (plaintext mnemonic, {label} test coins)", path.display());
+                    println!("✓ wallet created -> {} (plaintext mnemonic, {label} test coins)", dir.join("mnemonic").display());
                     println!();
                     println!("BACK UP these 12 words:");
-                    println!("  {}", phrase.as_str());
-                    println!();
                 }
+                println!("  {}", phrase.as_str());
+                println!();
             }
             let w = storage::load_wallet()?;
             println!("network:  {label}");
-            println!("identity: {}", tunnel::public_key_hex(&w)?);
+            println!("identity: {}", w.id_hex()?);
             println!("address:  {}", w.address(0)?);
             let (ext, int) = w.descriptors();
             match chain::balance(&ext, &int) {
@@ -129,7 +127,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("id") => {
             let w = storage::load_wallet()?;
-            println!("{}", tunnel::public_key_hex(&w)?);
+            println!("{}", w.id_hex()?);
             eprintln!("(your identity. a peer pays you with:  cm pay <this>@<your-host:port> <sats>)");
         }
         Some("receive") => {
@@ -146,10 +144,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let (peer_pub, peer_addr) = peer.split_once('@').ok_or(usage)?;
             let w = storage::load_wallet()?;
             tunnel::pay(&w, &storage::ledger_path(&w)?, peer_addr, peer_pub, sats)?;
-        }
-        Some("demo") => {
-            let amount: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10_000);
-            demo::run(amount)?;
         }
         Some("mcp") => {
             // Run the stdio MCP server: an AI agent drives cm_send / cm_balance
@@ -206,10 +200,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  cm send <addr> <sats>            raw on-chain send to an address");
             eprintln!("  cm confs <txid>                  confirmation count for a txid");
             eprintln!("  cm policy                        show the spend policy (limits/fee/blocklist)");
-            eprintln!("  cm demo [sats]                   end-to-end payment flow in one process");
             eprintln!("  cm mcp                           stdio MCP server (cm_send, cm_balance) for AI agents");
             eprintln!();
-            eprintln!("wallet unlock: encrypted seed (CM_PASSPHRASE) or CM_MNEMONIC for the demo.");
+            eprintln!("identities: each `cm init` is one agent, stored under ~/.config/computermoney/<id8>/;");
+            eprintln!("            several on one machine? pick with CM_ID=<identity prefix>.");
+            eprintln!("wallet unlock: encrypted seed (CM_PASSPHRASE) or the stored mnemonic; CM_MNEMONIC overrides.");
             eprintln!("network: CM_NETWORK = mainnet (default) | testnet | signet.");
             std::process::exit(2);
         }

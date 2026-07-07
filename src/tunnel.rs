@@ -13,7 +13,6 @@
 //! knows the tunnel is here.
 
 use std::error::Error;
-use std::fmt::Write as _;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
@@ -38,21 +37,6 @@ pub fn identity(wallet: &Wallet) -> Result<(StaticSecret, PublicKey), Box<dyn Er
     let secret = StaticSecret::from(*wallet.wg_secret_bytes()?);
     let public = PublicKey::from(&secret);
     Ok((secret, public))
-}
-
-/// Hex of this agent's WireGuard public key — the handle a peer needs to
-/// open a tunnel to us.
-pub fn public_key_hex(wallet: &Wallet) -> Result<String, Box<dyn Error>> {
-    let (_secret, public) = identity(wallet)?;
-    Ok(to_hex(public.as_bytes()))
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(s, "{b:02x}");
-    }
-    s
 }
 
 /// Parse a peer's 64-hex-char (32-byte) WireGuard public key.
@@ -195,18 +179,29 @@ impl FramedTunnel {
         let mut core = WgCore::new(secret, peer_pub);
         let mut buf = [0u8; 2048];
 
-        // 1. handshake initiation -> response
-        let (n, from) = sock.recv_from(&mut buf)?;
-        let resp = match core.process(&buf[..n])? {
-            Step::SendBack(resp) => resp,
-            _ => return Err("handshake: expected an initiation".into()),
+        // 1. handshake initiation -> response. The socket is open to the
+        // network, so datagrams that fail authentication (another WireGuard
+        // stack's traffic, scans) are dropped like real WireGuard drops
+        // them — only OUR peer's initiation ends the wait.
+        let (resp, from) = loop {
+            let (n, from) = sock.recv_from(&mut buf)?;
+            match core.process(&buf[..n]) {
+                Ok(Step::SendBack(resp)) => break (resp, from),
+                Ok(_) => {}
+                Err(e) => eprintln!("[wg] dropped an unauthenticated datagram ({e})"),
+            }
         };
         sock.send_to(&resp, from)?;
         let mut t = Self { core, sock, peer: from };
 
-        // 2. keepalive completes the session
-        let (n, _from) = t.sock.recv_from(&mut buf)?;
-        let _ = t.core.process(&buf[..n])?;
+        // 2. keepalive completes the session (junk dropped the same way)
+        loop {
+            let (n, _from) = t.sock.recv_from(&mut buf)?;
+            match t.core.process(&buf[..n]) {
+                Ok(_) => break,
+                Err(e) => eprintln!("[wg] dropped an unauthenticated datagram ({e})"),
+            }
+        }
         Ok(t)
     }
 }
@@ -232,7 +227,17 @@ impl Wire for FramedTunnel {
                 }
                 Err(e) => return Err(e.into()),
             };
-            match self.core.process(&buf[..n])? {
+            // A datagram that fails authentication must not kill the
+            // session — drop it and keep serving, exactly as WireGuard
+            // does. (Stray WG traffic on the port is a fact of life.)
+            let step = match self.core.process(&buf[..n]) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[wg] dropped an unauthenticated datagram ({e})");
+                    continue;
+                }
+            };
+            match step {
                 Step::Frame(frame) => {
                     let (msg, _consumed) = Message::decode(&frame)
                         .ok_or("tunnel frame did not decode to a message")?;

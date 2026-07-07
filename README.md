@@ -171,8 +171,8 @@ the Bitcoin network* (required to actually settle).
 5. **B reconciles against the chain.** B trusts the chain, not the message: `reconcile`
    queries confirmations; 3 confs = Final. Global consensus validates the tx — B's standard
    BIP-86 address is honored by every node, Bitcoin Core included. *Internet required.*
-6. **Both record it** in their own signed append-only ledger (`ledger-<pk8>.jsonl`, named
-   by each agent's signing pubkey — balance, work queue, crash recovery).
+6. **Both record it** in their own signed append-only `ledger.jsonl`, inside each agent's
+   identity directory (balance, work queue, crash recovery).
 
 **Two honest gaps.** (1) The *decision* to pay — the trigger for step 1 — lives outside
 `cm` today (a human, or an agent that execs `cm pay`); `cm receive` is already an unattended
@@ -236,13 +236,18 @@ cm demo [sats]                    full end-to-end payment flow in one process
 cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-agent clients
 ```
 
-Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or `CM_MNEMONIC` for the demo.
+Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or the stored mnemonic; `CM_MNEMONIC`
+overrides both.
 Network: `CM_NETWORK` = `mainnet` (default) | `testnet` | `signet`; `CM_ESPLORA` overrides
 the esplora endpoint.
-Config lives under `~/.config/computermoney/` (`seed.enc`, `ledger-<pk8>.jsonl`,
-`policy.json`); override with `CM_SEED` / `CM_LEDGER` / `CM_POLICY`. The ledger file
-is named by the wallet's ledger-signing pubkey (first 8 hex chars), so two identities
-on one machine never share — and never cross-sign — a ledger.
+
+**Identities.** Each `cm init` creates one agent, stored in its own directory
+`~/.config/computermoney/<id8>/` — where `<id8>` is the first 8 hex chars of the identity
+`cm id` prints — holding that agent's `mnemonic` (or `seed.enc`) and `ledger.jsonl`. So two
+agents on one machine never share, or cross-sign, a ledger. Run `cm init` twice and you have
+two agents. The acting identity is chosen by `CM_ID=<id prefix>`, or the `default` marker
+(the first identity created), or — with only one wallet — automatically. `policy.json` stays
+at the config root (global; `CM_POLICY` overrides).
 
 ## MCP server — natural-language payments
 
@@ -263,8 +268,9 @@ secret never crosses the tool boundary.
 
 The [installer](#install) already does this for Claude Code on a signet demo wallet. To wire it
 **manually** — Claude Desktop, another client, or mainnet — point your MCP config (`.mcp.json`
-or `claude_desktop_config.json`) at the `cm` binary with `mcp`, plus the unlock + network in the
-env. Signet demo with a plaintext mnemonic:
+or `claude_desktop_config.json`) at the `cm` binary with `mcp`, plus the network in the env.
+The registration carries **no secret**: the server resolves the identity from the store on
+disk (run `cm init` first). Signet demo:
 
 ```json
 {
@@ -273,14 +279,15 @@ env. Signet demo with a plaintext mnemonic:
       "command": "/abs/path/to/cm",
       "args": ["mcp"],
       "env": {
-        "CM_NETWORK": "signet",
-        "CM_MNEMONIC": "<your 12-word signet mnemonic>",
-        "CM_POLICY": "/abs/path/to/policy.json"
+        "CM_NETWORK": "signet"
       }
     }
   }
 }
 ```
+
+Add `"CM_ID": "<id8>"` only if the machine holds several identities and you want a specific
+one; otherwise the `default` (or sole) identity is used.
 
 For **mainnet** (real BTC), unlock the sealed seed with a passphrase instead of a plaintext
 mnemonic, and **set a spend cap** — on mainnet `cm` refuses to broadcast unless `policy.json`

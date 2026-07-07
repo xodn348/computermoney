@@ -77,53 +77,124 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, Box<
     Ok(key)
 }
 
-/// Where the encrypted seed lives. `CM_SEED` overrides; otherwise
-/// `~/.config/computermoney/seed.enc`.
-pub fn seed_path() -> PathBuf {
-    config_path("CM_SEED", "seed.enc")
+/// Root of all agent state: `~/.config/computermoney/`. Each identity
+/// (wallet) is one subdirectory named by the first 8 hex chars of its
+/// identity pubkey (`cm id`), holding `mnemonic` or `seed.enc` plus
+/// `ledger.jsonl`. A `default` marker file at the root names the identity
+/// used when `CM_ID` is not set.
+fn config_root() -> PathBuf {
+    let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
+    p.push(".config");
+    p.push("computermoney");
+    p
 }
 
-/// Where the plaintext mnemonic lives in the no-passphrase test-network
-/// flow: `mnemonic`, next to the seed file (so `CM_SEED` relocates both).
-/// Real funds never touch this path — `load_wallet` refuses it on mainnet.
-pub fn mnemonic_path() -> PathBuf {
-    seed_path().with_file_name("mnemonic")
+/// The identities stored on this machine: 8-lowercase-hex subdirectory
+/// names under the config root, sorted. Anything else there is ignored.
+pub fn wallet_ids() -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(config_root())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.len() == 8 && n.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')))
+        .collect();
+    ids.sort();
+    ids
 }
 
-/// Persist a plaintext mnemonic (owner-only 0600) for the no-passphrase
-/// test-network flow. Callers gate on a non-mainnet network.
-pub fn save_plaintext_mnemonic(mnemonic: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let path = mnemonic_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+/// Choose the acting identity among `ids`: an explicit `CM_ID` prefix wins,
+/// then the `default` marker, then a sole wallet. Several wallets with no
+/// selector is an error that lists them — never a silent guess. Pure, so
+/// the selection rules are unit-testable.
+fn pick_identity(
+    ids: &[String],
+    cm_id: Option<&str>,
+    default: Option<&str>,
+) -> Result<String, Box<dyn Error>> {
+    if let Some(want) = cm_id {
+        let want = want.trim();
+        let hits: Vec<&String> = ids
+            .iter()
+            .filter(|id| {
+                if want.len() >= 8 { want.starts_with(id.as_str()) } else { id.starts_with(want) }
+            })
+            .collect();
+        return match hits.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(format!("CM_ID={want} matches no identity here (have: {})", ids.join(", ")).into()),
+            _ => Err(format!(
+                "CM_ID={want} is ambiguous (matches: {})",
+                hits.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            )
+            .into()),
+        };
     }
-    std::fs::write(&path, format!("{mnemonic}\n"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    if let Some(d) = default {
+        let d = d.trim();
+        if ids.iter().any(|id| id == d) {
+            return Ok(d.to_string());
+        }
     }
-    Ok(path)
+    match ids {
+        [one] => Ok(one.clone()),
+        [] => Err("no wallet: run `cm init` (or `cm setup`) first".into()),
+        _ => Err(format!(
+            "several identities live here ({}); set CM_ID=<prefix> to pick one",
+            ids.join(", ")
+        )
+        .into()),
+    }
 }
 
-/// Where this agent's append-only ledger lives. `CM_LEDGER` overrides;
-/// otherwise `~/.config/computermoney/ledger-<pk8>.jsonl`, keyed by the
-/// wallet's ledger-signing pubkey. Ledger entries are identity-signed and
+/// The directory this wallet's state lives in: `<root>/<id8>/`, derived
+/// from the wallet itself so it never depends on how the wallet was found.
+pub fn wallet_dir(wallet: &Wallet) -> Result<PathBuf, Box<dyn Error>> {
+    let id = wallet.id_hex()?;
+    Ok(config_root().join(&id[..8]))
+}
+
+/// Where this agent's append-only ledger lives: `ledger.jsonl` inside the
+/// wallet's identity directory. Ledger entries are identity-signed and
 /// `open_with_identity` refuses foreign signatures, so two identities must
-/// never share a file — the per-identity default enforces that (a fixed
-/// `ledger.jsonl` let two wallets on one machine interleave signatures,
-/// bricking the file for every later open).
+/// never share a file — the directory layout enforces that.
 pub fn ledger_path(wallet: &Wallet) -> Result<PathBuf, Box<dyn Error>> {
-    if let Ok(p) = std::env::var("CM_LEDGER") {
-        return Ok(PathBuf::from(p));
-    }
-    Ok(default_config_file(&ledger_file_name(wallet)?))
+    Ok(wallet_dir(wallet)?.join("ledger.jsonl"))
 }
 
-/// `ledger-<pk8>.jsonl` — the per-identity default ledger filename.
-fn ledger_file_name(wallet: &Wallet) -> Result<String, Box<dyn Error>> {
-    let pk = wallet.signing_pubkey()?.to_string();
-    Ok(format!("ledger-{}.jsonl", &pk[..8]))
+fn default_marker_path() -> PathBuf {
+    config_root().join("default")
+}
+
+/// Persist a freshly generated wallet into its identity directory: sealed
+/// `seed.enc` when a passphrase is given, otherwise a plaintext `mnemonic`
+/// (owner-only 0600; callers gate mainnet). The first wallet on a machine
+/// becomes the `default` identity. Returns the identity directory.
+pub fn save_new_wallet(
+    wallet: &Wallet,
+    phrase: &str,
+    passphrase: Option<&str>,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let dir = wallet_dir(wallet)?;
+    std::fs::create_dir_all(&dir)?;
+    match passphrase {
+        Some(pass) => save_encrypted(phrase, pass, &dir.join("seed.enc"))?,
+        None => {
+            let path = dir.join("mnemonic");
+            std::fs::write(&path, format!("{phrase}\n"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            }
+        }
+    }
+    let marker = default_marker_path();
+    if !marker.exists() {
+        std::fs::write(&marker, format!("{}\n", &wallet.id_hex()?[..8]))?;
+    }
+    Ok(dir)
 }
 
 /// Resolve an env override or `~/.config/computermoney/<file>`.
@@ -131,16 +202,7 @@ pub(crate) fn config_path(env_key: &str, file: &str) -> PathBuf {
     if let Ok(p) = std::env::var(env_key) {
         return PathBuf::from(p);
     }
-    default_config_file(file)
-}
-
-/// `~/.config/computermoney/<file>`, with no env override.
-fn default_config_file(file: &str) -> PathBuf {
-    let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-    p.push(".config");
-    p.push("computermoney");
-    p.push(file);
-    p
+    config_root().join(file)
 }
 
 /// Active Bitcoin network. `CM_NETWORK` = `mainnet` (default) | `testnet` |
@@ -195,35 +257,53 @@ pub fn explorer_tx_url(txid: &str) -> String {
     format!("{base}{txid}")
 }
 
-/// Load the signing wallet. Prefers the encrypted seed file (unlocked
-/// with `CM_PASSPHRASE`); falls back to a plaintext `CM_MNEMONIC` env var,
-/// then to the plaintext mnemonic file — both for test networks only.
-/// Errors if nothing is available.
+/// Load the acting wallet. `CM_MNEMONIC` (an explicit escape hatch) wins;
+/// otherwise resolve the identity directory — `CM_ID` prefix, then the
+/// `default` marker, then a sole wallet — and unlock its `seed.enc` (with
+/// `CM_PASSPHRASE`) or read its plaintext `mnemonic` (refused on mainnet).
 pub fn load_wallet() -> Result<Wallet, Box<dyn Error>> {
-    let path = seed_path();
-    if path.exists() {
-        let pass = std::env::var("CM_PASSPHRASE")
-            .map_err(|_| "encrypted seed found; set CM_PASSPHRASE to unlock")?;
-        let phrase = load_encrypted(&pass, &path)?; // Zeroizing<String>
-        return Ok(Wallet::from_mnemonic(phrase.as_str())?);
-    }
     if let Ok(phrase) = std::env::var("CM_MNEMONIC") {
         let phrase = Zeroizing::new(phrase); // wipe our copy on drop
         return Ok(Wallet::from_mnemonic(phrase.as_str())?);
     }
-    let mn_path = mnemonic_path();
-    if mn_path.exists() {
+    let cm_id = std::env::var("CM_ID").ok();
+    let marker = std::fs::read_to_string(default_marker_path()).ok();
+    let id = pick_identity(&wallet_ids(), cm_id.as_deref(), marker.as_deref())?;
+    let dir = config_root().join(&id);
+    let seed = dir.join("seed.enc");
+    let w = if seed.exists() {
+        let pass = std::env::var("CM_PASSPHRASE")
+            .map_err(|_| format!("identity {id} has an encrypted seed; set CM_PASSPHRASE to unlock"))?;
+        let phrase = load_encrypted(&pass, &seed)?; // Zeroizing<String>
+        Wallet::from_mnemonic(phrase.as_str())?
+    } else {
+        let mn = dir.join("mnemonic");
+        if !mn.exists() {
+            return Err(format!("identity {id} has no seed.enc or mnemonic file — recreate it with `cm init`").into());
+        }
         // A bare key on disk is a test-network convenience, never a way to
         // hold real funds: on mainnet it is refused, not silently used.
         if network() == Network::Bitcoin {
             return Err("plaintext mnemonic file found, refused on mainnet — \
-                        seal it with `cm init` + CM_PASSPHRASE instead"
+                        recreate the wallet with CM_PASSPHRASE set"
                 .into());
         }
-        let phrase = Zeroizing::new(std::fs::read_to_string(&mn_path)?);
-        return Ok(Wallet::from_mnemonic(phrase.as_str())?);
+        let phrase = Zeroizing::new(std::fs::read_to_string(&mn)?);
+        Wallet::from_mnemonic(phrase.as_str())?
+    };
+    // The identity key depends on the coin type, so a wallet stored under a
+    // testnet-derived name resolves to a different id on mainnet (and vice
+    // versa). Refuse the mismatch instead of scattering state across dirs.
+    let actual = w.id_hex()?;
+    if !actual.starts_with(&id) {
+        return Err(format!(
+            "identity {id} resolves to {} on {} — this wallet belongs to a different network",
+            &actual[..8],
+            network_label()
+        )
+        .into());
     }
-    Err("no wallet: run `cm init` (or `cm setup`) first — on mainnet set CM_PASSPHRASE to seal the seed".into())
+    Ok(w)
 }
 
 #[cfg(test)]
@@ -269,17 +349,32 @@ mod tests {
     }
 
     #[test]
-    fn ledger_file_name_is_per_identity() {
+    fn pick_identity_rules() {
+        let ids: Vec<String> = vec!["11aa22bb".into(), "99ff00ee".into()];
+        // Explicit CM_ID: a unique prefix, or the full 64-hex identity.
+        assert_eq!(pick_identity(&ids, Some("99"), None).unwrap(), "99ff00ee");
+        let full = format!("11aa22bb{}", "c".repeat(56));
+        assert_eq!(pick_identity(&ids, Some(&full), None).unwrap(), "11aa22bb");
+        assert!(pick_identity(&ids, Some("77"), None).is_err(), "no match");
+        assert!(pick_identity(&ids, Some(""), None).is_err(), "ambiguous");
+        // The default marker, as read from disk (newline included).
+        assert_eq!(pick_identity(&ids, None, Some("99ff00ee\n")).unwrap(), "99ff00ee");
+        // A stale marker falls through; a sole wallet then auto-picks.
+        assert_eq!(pick_identity(&ids[..1], None, Some("99ff00ee\n")).unwrap(), "11aa22bb");
+        assert_eq!(pick_identity(&ids[..1], None, None).unwrap(), "11aa22bb");
+        // Several without a selector refuse; none at all refuses.
+        assert!(pick_identity(&ids, None, None).is_err());
+        assert!(pick_identity(&[], None, None).is_err());
+    }
+
+    #[test]
+    fn wallet_dirs_differ_per_identity() {
         let a = Wallet::from_mnemonic(MNEMONIC).unwrap();
         let (b, _) = Wallet::generate().unwrap();
-        let na = ledger_file_name(&a).unwrap();
-        let nb = ledger_file_name(&b).unwrap();
-        assert_ne!(na, nb, "two identities must never share a ledger file");
-        assert_eq!(na, ledger_file_name(&a).unwrap(), "same identity, same name");
-        assert!(
-            na.starts_with("ledger-") && na.ends_with(".jsonl"),
-            "unexpected ledger filename: {na}"
-        );
+        let da = wallet_dir(&a).unwrap();
+        assert_ne!(da, wallet_dir(&b).unwrap(), "two identities must never share a directory");
+        assert_eq!(da, wallet_dir(&a).unwrap(), "same identity, same directory");
+        assert_eq!(ledger_path(&a).unwrap(), da.join("ledger.jsonl"));
     }
 
     #[test]

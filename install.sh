@@ -38,19 +38,20 @@ if command -v claude >/dev/null 2>&1; then
   else
     say "Registering the MCP server with Claude Code (throwaway signet demo wallet)…"
     INIT_OUT="$(env -u CM_PASSPHRASE CM_NETWORK=signet "$BIN" init 2>/dev/null || true)"
-    MNEMONIC="$(printf '%s\n' "$INIT_OUT" | grep -F 'mnemonic: ' | cut -d' ' -f2-)"
     ADDR="$(printf '%s\n' "$INIT_OUT" | grep -F 'address[0]: ' | cut -d' ' -f2-)"
-    [ -n "$MNEMONIC" ] || err \
+    [ -n "$ADDR" ] || err \
       "demo-wallet generation failed; register manually — see $REPO#mcp-server--natural-language-payments"
+    # No secret in the registration: init wrote the wallet directory and the
+    # `default` marker, so the server resolves that identity from the store.
     claude mcp add -s user "$SERVER_NAME" \
-      -e CM_NETWORK=signet -e CM_MNEMONIC="$MNEMONIC" -- "$BIN" mcp >&2
+      -e CM_NETWORK=signet -- "$BIN" mcp >&2
     say "Done — restart Claude Code, then just say:  \"send 5000 sats to <address>\""
     say "This is a signet demo wallet (worthless coins). Fund it to try a real send:"
     printf '\n  address: %s\n  faucet:  https://faucet.mutinynet.com/\n\n' "$ADDR" >&2
   fi
 else
-  say "Claude Code CLI not found. Add this to your MCP client config (.mcp.json / claude_desktop_config.json):"
-  printf '\n  "computermoney": { "command": "%s", "args": ["mcp"],\n    "env": { "CM_NETWORK": "signet", "CM_MNEMONIC": "<your 12-word mnemonic>" } }\n\n' "$BIN" >&2
+  say "Claude Code CLI not found. Run '$BIN init' once, then add this to your MCP client config (.mcp.json / claude_desktop_config.json):"
+  printf '\n  "computermoney": { "command": "%s", "args": ["mcp"],\n    "env": { "CM_NETWORK": "signet" } }\n  # add "CM_ID": "<id8>" to pick one of several identities\n\n' "$BIN" >&2
 fi
 
 # --- mainnet is deliberate -------------------------------------------------

@@ -97,6 +97,20 @@ impl Wallet {
         Ok(self.signing_keypair()?.x_only_public_key().0)
     }
 
+    /// This agent's identity: the WireGuard public key (branch 3) as 64
+    /// lowercase hex chars. It is what `cm id` prints, what a peer pays to,
+    /// and (first 8 chars) the name of the wallet's state directory.
+    pub fn id_hex(&self) -> Result<String, Error> {
+        use std::fmt::Write as _;
+        let secret = boringtun::x25519::StaticSecret::from(*self.wg_secret_bytes()?);
+        let public = boringtun::x25519::PublicKey::from(&secret);
+        let mut s = String::with_capacity(64);
+        for b in public.as_bytes() {
+            let _ = write!(s, "{b:02x}");
+        }
+        Ok(s)
+    }
+
     /// The agent's WireGuard static secret as raw 32 bytes, derived at
     /// branch 3 (m/86'/{coin}'/0'/3/0) — reserved for the tunnel identity,
     /// distinct from the receive (0/1) and ledger-signing (2) branches.
@@ -188,6 +202,19 @@ mod tests {
         let w = Wallet::from_mnemonic_on(Network::Signet, VECTOR_MNEMONIC).unwrap();
         let addr = w.address(0).unwrap().to_string();
         assert!(addr.starts_with("tb1p"), "expected signet Taproot, got {addr}");
+    }
+
+    #[test]
+    fn id_hex_is_stable_and_network_scoped() {
+        let s = Wallet::from_mnemonic_on(Network::Signet, VECTOR_MNEMONIC).unwrap();
+        let id = s.id_hex().unwrap();
+        assert_eq!(id.len(), 64);
+        assert!(id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
+        assert_eq!(id, s.id_hex().unwrap());
+        // The coin type differs on mainnet, so the identity does too —
+        // wallets for different networks land in different directories.
+        let m = Wallet::from_mnemonic_on(Network::Bitcoin, VECTOR_MNEMONIC).unwrap();
+        assert_ne!(id, m.id_hex().unwrap());
     }
 
     #[test]
