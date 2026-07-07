@@ -232,7 +232,6 @@ cm address [n]                    a receive address (to fund the wallet)
 cm send <addr> <sats>             raw on-chain send to an address (policy-gated)
 cm confs <txid>                   confirmation count for a txid
 cm policy                         show the active spend policy (limits / fee / blocklist)
-cm demo [sats]                    full end-to-end payment flow in one process
 cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-agent clients
 ```
 
