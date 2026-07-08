@@ -317,3 +317,8 @@ Source-available under the **[PolyForm Shield License 1.0.0](LICENSE)** —
 Copyright 2026 Junhyuk Lee. Use it for anything, including building products on
 top of it; the one carve-out is that you may not use it to build a product that
 competes with computermoney. See [`LICENSE`](LICENSE) for the exact terms.
+
+computermoney bundles third-party open-source components (all permissive:
+MIT / Apache-2.0 / BSD / ISC / CC0, plus MPL-2.0 for `webpki-roots`), none of
+which impose a copyleft obligation on this source. Full attributions and license
+texts are in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
