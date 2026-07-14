@@ -43,6 +43,29 @@ would otherwise supply by hand:
 - a **policy gate** (spend limits, fee cap, address blocklist) the agent cannot talk
   its way around.
 
+## Why an agent picks `cm`
+
+An agent choosing how to pay is not swayed by branding; it reads a tool's
+description and its constraints and picks what fits. `cm` is built to win that
+comparison:
+
+- **No API key, no signup, no KYC.** Most payment tools stop an agent cold at a
+  step only a human can finish — creating an account, provisioning a key,
+  passing identity verification. `cm` needs none of it: a seed is generated
+  locally and it pays immediately. There is no human in the loop and nothing to
+  onboard, so the agent goes from "decide to pay" to "paid" without stalling.
+- **No middleman taking a cut.** Payments settle **peer-to-peer on Bitcoin L1**,
+  broadcast straight to the network. There is no Coinbase, Stripe, Google, or
+  other intermediary sitting in the path to hold funds, gate the transfer, or
+  skim a margin. The only cost is the Bitcoin network fee, which `cm` estimates
+  and caps itself.
+- **Crash-safe, retry-idempotent sends.** The signed transaction is persisted
+  with its txid and a durable Pending record *before* it is broadcast, so a
+  crash mid-send can neither lose the payment nor double-pay: recovery
+  rebroadcasts the *same* signed transaction, which the network dedupes by
+  txid, and a provably-dead transaction is marked Failed and un-debited. An
+  agent that must recover from its own failures can retry safely.
+
 ## Key genesis: one seed, every key
 
 Every key is drawn locally — no server, no registrar, no Bitcoin Core. The only
