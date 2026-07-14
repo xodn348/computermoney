@@ -4,6 +4,7 @@
 //! No tunnel, no chain sync yet — just the wallet root the rest builds on.
 
 mod chain;
+mod discover;
 mod ledger;
 mod mcp;
 mod net;
@@ -129,8 +130,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("id") => {
             let w = storage::load_wallet()?;
-            println!("{}", w.id_hex()?);
-            eprintln!("(your identity. a peer pays you with:  cm pay <this>@<your-host:port> <sats>)");
+            let card = discover::card_pubkey_hex(&*w.card_secret_bytes()?);
+            println!("{card}");
+            eprintln!("(your card key — the one thing you share. publish where to reach you with");
+            eprintln!(" `cm publish <your-host:port>`; a peer then pays you with `cm pay {card} <sats>`.)");
+        }
+        Some("publish") => {
+            // Sign and put our business card to the DHT: the WG endpoint a
+            // payer tunnels to, addressed by our ed25519 card key. Opt-in —
+            // publishing ties this endpoint to the card identity, so it runs
+            // only when the agent deliberately wants to be reachable.
+            let usage = "usage: publish <your-host:port>";
+            let endpoint = args.get(2).ok_or(usage)?;
+            let w = storage::load_wallet()?;
+            let card = discover::Card {
+                wg: format!("{}@{}", w.id_hex()?, endpoint),
+                at: ledger::now_unix(),
+            };
+            eprintln!("publishing card to the DHT…");
+            discover::publish(&*w.card_secret_bytes()?, &card)?;
+            println!("published: {}", card.wg);
+            eprintln!("(peers reach you by your card key: cm id)");
+        }
+        Some("resolve") => {
+            let usage = "usage: resolve <card-key>";
+            let key = discover::parse_card_key(args.get(2).ok_or(usage)?)?;
+            eprintln!("resolving from the DHT…");
+            match discover::resolve(&key)? {
+                Some(card) => {
+                    println!("wg: {}", card.wg);
+                    println!("at: {}", card.at);
+                }
+                None => println!("(no card found for that key)"),
+            }
         }
         Some("receive") => {
             let usage = "usage: receive <payer-pubkey-hex> [bind-udp-addr]";
@@ -140,12 +172,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             tunnel::serve(&w, &storage::ledger_path(&w)?, bind, peer)?;
         }
         Some("pay") => {
-            let usage = "usage: pay <peer-pubkey-hex>@<host:port> <sats>";
+            // Two forms. `pay <pubkey>@<host:port> <sats>` is the manual path
+            // (you already know the endpoint). `pay <card-key> <sats>` is the
+            // DHT path: resolve the peer's card to their current WG endpoint,
+            // then the same tunnel + Bitcoin settle. Discovery is the only new
+            // step — everything after the `@` split is identical.
+            let usage = "usage: pay <card-key | pubkey@host:port> <sats>";
             let peer = args.get(2).ok_or(usage)?;
             let sats: u64 = args.get(3).ok_or(usage)?.parse()?;
-            let (peer_pub, peer_addr) = peer.split_once('@').ok_or(usage)?;
             let w = storage::load_wallet()?;
-            tunnel::pay(&w, &storage::ledger_path(&w)?, peer_addr, peer_pub, sats)?;
+            let (peer_pub, peer_addr) = match peer.split_once('@') {
+                Some((pubkey, addr)) => (pubkey.to_string(), addr.to_string()),
+                None => {
+                    let key = discover::parse_card_key(peer)?;
+                    eprintln!("resolving card {}… (DHT)", &peer[..8]);
+                    let card = discover::resolve(&key)?
+                        .ok_or("no card found on the DHT for that key")?;
+                    let (pubkey, addr) = card
+                        .wg
+                        .split_once('@')
+                        .ok_or("resolved card has a malformed wg endpoint")?;
+                    eprintln!("found endpoint: {}", card.wg);
+                    (pubkey.to_string(), addr.to_string())
+                }
+            };
+            tunnel::pay(&w, &storage::ledger_path(&w)?, &peer_addr, &peer_pub, sats)?;
         }
         Some("mcp") => {
             // Run the stdio MCP server: an AI agent drives cm_send / cm_balance
@@ -185,9 +236,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("usage:");
             eprintln!("  cm setup                         create+seal a wallet, show how to fund and transact");
             eprintln!("  cm init                          create a wallet (seals seed if CM_PASSPHRASE)");
-            eprintln!("  cm id                            print your identity (give it to payers)");
+            eprintln!("  cm id                            print your card key (the one thing you share)");
+            eprintln!("  cm publish <your-host:port>      announce your WireGuard endpoint on the DHT");
+            eprintln!("  cm resolve <card-key>            look up a peer's endpoint on the DHT");
             eprintln!("  cm receive <payer-pubkey> [bind] wait for a payment over WireGuard");
-            eprintln!("  cm pay <pubkey@host:port> <sats> pay a peer over WireGuard");
+            eprintln!("  cm pay <card-key> <sats>         discover (DHT) -> talk (WireGuard) -> settle (Bitcoin)");
+            eprintln!("  cm pay <pubkey@host:port> <sats> pay a known endpoint directly (no DHT)");
             eprintln!();
             eprintln!("  cm balance                       on-chain balance");
             eprintln!("  cm address [n]                   a receive address (to fund the wallet)");

@@ -123,6 +123,20 @@ impl Wallet {
         Ok(Zeroizing::new(child.private_key.secret_bytes()))
     }
 
+    /// The agent's DHT business-card secret as raw 32 bytes, derived at
+    /// branch 4 (m/86'/{coin}'/0'/4/0) — the ed25519 seed for the signed
+    /// card an agent publishes to the Mainline DHT (BEP-44 is ed25519-only).
+    /// Reserved for discovery identity, distinct from receive (0/1),
+    /// ledger-signing (2), and the tunnel (3). Same one-mnemonic derivation
+    /// as the WG leaf; the caller (`discover`) turns these bytes into an
+    /// ed25519 signing key. They zeroize on drop.
+    pub fn card_secret_bytes(&self) -> Result<Zeroizing<[u8; 32]>, Error> {
+        let secp = Secp256k1::new();
+        let path = DerivationPath::from_str(&format!("m/86'/{}'/0'/4/0", self.coin_type()))?;
+        let child = self.root.derive_priv(&secp, &path)?;
+        Ok(Zeroizing::new(child.private_key.secret_bytes()))
+    }
+
     fn coin_type(&self) -> u32 {
         // BIP-44 registered coin types: 0 = mainnet, 1 = all testnets.
         if self.network == Network::Bitcoin {
