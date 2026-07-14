@@ -34,5 +34,5 @@ be merged.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-MIT License (see [LICENSE](LICENSE)). The "computermoney" name is not
+GNU Affero General Public License v3.0 (see [LICENSE](LICENSE)). The "computermoney" name is not
 covered by the code license — see [TRADEMARK.md](TRADEMARK.md).

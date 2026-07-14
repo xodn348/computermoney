@@ -313,10 +313,16 @@ all diagnostics go to stderr, so the stream stays clean for the client.
 
 ## License
 
-Source-available under the **[PolyForm Shield License 1.0.0](LICENSE)** —
-Copyright 2026 Junhyuk Lee. Use it for anything, including building products on
-top of it; the one carve-out is that you may not use it to build a product that
-competes with computermoney. See [`LICENSE`](LICENSE) for the exact terms.
+Free software under the **[GNU AGPL-3.0](LICENSE)** (`AGPL-3.0-only`),
+Copyright 2026 Junhyuk Lee. Use it, study it, modify it, redistribute it. The
+one condition: if you distribute a modified version, or offer one as a network
+service, you must make its complete source available under the same license.
+See [`LICENSE`](LICENSE) for the exact terms.
+
+The name **"computermoney"** and the project logo are trademarks and are not
+covered by the code license. Unmodified official builds may carry the name;
+forks and derivative products must pick a different one. See
+[`TRADEMARK.md`](TRADEMARK.md) for the full policy.
 
 computermoney bundles third-party open-source components (all permissive:
 MIT / Apache-2.0 / BSD / ISC / CC0, plus MPL-2.0 for `webpki-roots`), none of
