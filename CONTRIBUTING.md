@@ -35,8 +35,9 @@ be merged.
 
 By contributing, you agree that your contributions are licensed under the
 GNU Affero General Public License v3.0 (see [LICENSE](LICENSE)), and you
-additionally grant Ebsilon, Inc. a perpetual, worldwide, irrevocable right
-to relicense your contribution under other license terms. This keeps future
+additionally grant Junhyuk Lee, and his successors and assigns, a
+perpetual, worldwide, irrevocable right to relicense your contribution
+under other license terms. This keeps future
 dual licensing possible while the project itself stays AGPL for everyone.
 The "computermoney" name is not covered by the code license — see
 [TRADEMARK.md](TRADEMARK.md).
