@@ -28,17 +28,23 @@ use bitcoin::secp256k1::{Keypair, Message, Secp256k1, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 
 /// Confirmation stage. Maps to the locked thresholds: 0 confs = Pending,
-/// 1 conf = Soft (receipt ack), 3 confs = Final (delivery gate).
+/// 1 conf = Soft (receipt ack), 3 confs = Final (delivery gate). `Failed` is
+/// off that ladder entirely: it is never inferred from a confirmation count,
+/// only set explicitly by reconcile when a Sent tx is proven dead (its inputs
+/// are gone). A Failed send never moved money, so it is not debited.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Pending,
     Soft,
     Final,
+    Failed,
 }
 
 impl Status {
     /// Map a confirmation count to a status using the locked thresholds.
+    /// Never returns `Failed`: that is a deliberate reconcile decision, not a
+    /// function of the confirmation count.
     pub fn from_confirmations(confs: u32) -> Status {
         match confs {
             0 => Status::Pending,
@@ -221,7 +227,12 @@ impl Ledger {
                         bal += *sats as i64;
                     }
                 }
-                Entry::Sent { sats, .. } => bal -= *sats as i64,
+                Entry::Sent { txid, sats, .. } => {
+                    // A Failed send never left the wallet — do not debit it.
+                    if self.latest_status(txid) != Some(Status::Failed) {
+                        bal -= *sats as i64;
+                    }
+                }
                 _ => {}
             }
         }
@@ -239,7 +250,12 @@ impl Ledger {
                 Entry::Sent { txid, .. } | Entry::Received { txid, .. } => txid,
                 _ => continue,
             };
-            if seen.insert(txid.clone()) && self.latest_status(txid) != Some(Status::Final) {
+            // Final and Failed are both terminal — off the work queue.
+            let status = self.latest_status(txid);
+            if seen.insert(txid.clone())
+                && status != Some(Status::Final)
+                && status != Some(Status::Failed)
+            {
                 out.push(txid.clone());
             }
         }
@@ -267,6 +283,74 @@ impl Ledger {
 
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Directory holding not-yet-settled signed transactions: `pending/`
+    /// beside the ledger file. Each `<txid>.tx` is the raw consensus hex of a
+    /// broadcast-pending payment, written BEFORE the broadcast so reconcile
+    /// can recover (rebroadcast) a tx a crash left in limbo (Finding C).
+    pub fn sidecar_dir(&self) -> PathBuf {
+        match self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            Some(dir) => dir.join("pending"),
+            None => PathBuf::from("pending"),
+        }
+    }
+
+    fn sidecar_path(&self, txid: &str) -> PathBuf {
+        self.sidecar_dir().join(format!("{txid}.tx"))
+    }
+
+    /// Persist a signed tx's raw hex as `pending/<txid>.tx`, fsync'd. The
+    /// fsync mirrors `append`: a sidecar that returns Ok is durably on disk
+    /// before the broadcast that follows it.
+    pub fn write_sidecar(&self, txid: &str, tx_hex: &str) -> std::io::Result<()> {
+        let dir = self.sidecar_dir();
+        std::fs::create_dir_all(&dir)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(dir.join(format!("{txid}.tx")))?;
+        file.write_all(tx_hex.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Read back a sidecar's hex, or `None` if there is no sidecar for `txid`.
+    pub fn read_sidecar(&self, txid: &str) -> std::io::Result<Option<String>> {
+        match std::fs::read_to_string(self.sidecar_path(txid)) {
+            Ok(s) => Ok(Some(s)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Remove a sidecar once its payment has settled (Soft/Final) or been
+    /// declared Failed. Absent is success — reconcile may call this more than
+    /// once for the same txid.
+    pub fn remove_sidecar(&self, txid: &str) -> std::io::Result<()> {
+        match std::fs::remove_file(self.sidecar_path(txid)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The txids that currently have a sidecar (not-yet-settled signed txs).
+    pub fn list_sidecars(&self) -> std::io::Result<Vec<String>> {
+        let mut out = Vec::new();
+        let rd = match std::fs::read_dir(self.sidecar_dir()) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e),
+        };
+        for entry in rd {
+            let name = entry?.file_name();
+            if let Some(txid) = name.to_string_lossy().strip_suffix(".tx") {
+                out.push(txid.to_string());
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -305,12 +389,60 @@ pub fn reconcile(ledger: &mut Ledger) -> Result<usize, Box<dyn std::error::Error
     let mut changed = 0;
     for txid in ledger.pending() {
         let confs = crate::chain::confirmations(&txid)?;
+        if confs == 0 {
+            // Write-ahead recovery. A still-unconfirmed Sent may have crashed
+            // between the durable ledger write and its broadcast, or been
+            // broadcast and later evicted. If we still hold its signed tx,
+            // rebroadcast it. A hard rejection (inputs gone / conflicting
+            // spend) proves it can never confirm — mark it Failed, which
+            // un-debits it, and drop the sidecar. Anything else (accepted,
+            // already-known, transient, or no sidecar) stays Pending: only a
+            // provably-dead tx becomes Failed.
+            if let Some(hex) = ledger.read_sidecar(&txid)? {
+                if let crate::chain::Rebroadcast::Rejected(reason) =
+                    crate::chain::rebroadcast_hex(&hex)?
+                {
+                    eprintln!("[reconcile] {txid} can never confirm ({reason}); marking failed");
+                    ledger.update_status(&txid, Status::Failed)?;
+                    ledger.remove_sidecar(&txid)?;
+                    changed += 1;
+                    continue;
+                }
+            }
+        }
         let new_status = Status::from_confirmations(confs);
         if ledger.latest_status(&txid) != Some(new_status) {
             ledger.update_status(&txid, new_status)?;
             changed += 1;
         }
+        // Once a payment is settling (Soft/Final), its sidecar is no longer
+        // needed for recovery.
+        if confs >= 1 {
+            ledger.remove_sidecar(&txid)?;
+        }
     }
+
+    // Orphan sidecars: pay::send writes the sidecar before appending the Sent
+    // entry, so a crash in that gap leaves a signed tx on disk that was never
+    // recorded and never broadcast — the money never moved. With no ledger
+    // entry it can never confirm and must not be rebroadcast blind, so drop it.
+    let recorded: std::collections::HashSet<&str> = ledger
+        .entries()
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Sent { txid, .. } => Some(txid.as_str()),
+            _ => None,
+        })
+        .collect();
+    let orphans: Vec<String> = ledger
+        .list_sidecars()?
+        .into_iter()
+        .filter(|txid| !recorded.contains(txid.as_str()))
+        .collect();
+    for txid in orphans {
+        ledger.remove_sidecar(&txid)?;
+    }
+
     Ok(changed)
 }
 
@@ -431,6 +563,69 @@ mod tests {
         assert_eq!(Status::from_confirmations(2), Status::Soft);
         assert_eq!(Status::from_confirmations(3), Status::Final);
         assert_eq!(Status::from_confirmations(6), Status::Final);
+    }
+
+    #[test]
+    fn failed_send_is_refunded_and_leaves_the_queue() {
+        let path = temp_path("failed");
+        let mut l = Ledger::open(&path).unwrap();
+        l.append(Entry::Received { seq: 0, txid: "r".into(), sats: 100_000, index: 0, status: Status::Final }).unwrap();
+        l.append(Entry::Sent { seq: 1, txid: "s".into(), sats: 30_000, to: "x".into(), status: Status::Pending, at: 0 }).unwrap();
+        // While Pending, the send is debited and on the work queue.
+        assert_eq!(l.balance(), 70_000);
+        assert!(l.pending().contains(&"s".to_string()));
+
+        // reconcile proves it dead and marks it Failed: the money never left,
+        // so balance is restored and it drops off the queue.
+        l.update_status("s", Status::Failed).unwrap();
+        assert_eq!(l.balance(), 100_000, "a Failed send must not be debited");
+        assert!(!l.pending().contains(&"s".to_string()), "Failed is terminal");
+
+        // Survives a restart.
+        let l2 = Ledger::open(&path).unwrap();
+        assert_eq!(l2.balance(), 100_000);
+        assert!(l2.pending().is_empty());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn sidecar_write_read_remove_roundtrip() {
+        // Own directory so the shared `pending/` dir can't collide with other
+        // tests, and list_sidecars() sees only this ledger's sidecars.
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("cm_sidecar_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let l = Ledger::open(dir.join("ledger.jsonl")).unwrap();
+
+        let txid = "deadbeef";
+        assert_eq!(l.read_sidecar(txid).unwrap(), None, "absent before write");
+        l.write_sidecar(txid, "0100abcd").unwrap();
+        assert_eq!(l.read_sidecar(txid).unwrap(), Some("0100abcd".to_string()));
+        assert!(l.list_sidecars().unwrap().contains(&txid.to_string()));
+
+        l.remove_sidecar(txid).unwrap();
+        assert_eq!(l.read_sidecar(txid).unwrap(), None, "gone after remove");
+        assert!(!l.list_sidecars().unwrap().contains(&txid.to_string()));
+        // Removing an absent sidecar is a no-op success.
+        l.remove_sidecar(txid).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reconcile_drops_orphan_sidecars() {
+        // A sidecar with no matching Sent entry (crash between write_sidecar
+        // and the ledger append) is garbage: reconcile removes it. No pending
+        // entries means reconcile makes no network call.
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("cm_orphan_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut l = Ledger::open(dir.join("ledger.jsonl")).unwrap();
+
+        l.write_sidecar("orphantxid", "0100abcd").unwrap();
+        assert!(l.pending().is_empty(), "no entries -> nothing pending -> no chain call");
+        reconcile(&mut l).unwrap();
+        assert_eq!(l.read_sidecar("orphantxid").unwrap(), None, "orphan sidecar dropped");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

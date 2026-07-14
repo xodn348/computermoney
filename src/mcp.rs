@@ -195,9 +195,10 @@ fn call_send(wallet: &wallet::Wallet, id: Value, args: Option<&Value>) -> Value 
 }
 
 /// The exact `cm send` recipe (main.rs send arm) on the held wallet: open the
-/// signed ledger, gate on policy (amount + blocklist), broadcast through the
-/// money chokepoint (which also runs the mainnet guard), then record the Sent
-/// entry. Returns the human text the agent reads back.
+/// signed ledger, gate on policy (amount + blocklist), then hand off to
+/// `pay::send`, which records the Sent entry durably BEFORE broadcasting (the
+/// mainnet guard runs inside the build step). Returns the human text the agent
+/// reads back.
 fn send_payment(wallet: &wallet::Wallet, to: &str, sats: u64) -> Result<String, Box<dyn Error>> {
     let mut led =
         ledger::Ledger::open_with_identity(storage::ledger_path(wallet)?, wallet.signing_keypair()?)?;
@@ -207,18 +208,10 @@ fn send_payment(wallet: &wallet::Wallet, to: &str, sats: u64) -> Result<String, 
     policy.check_address(to)?;
     let (ext, int) = wallet.descriptors();
     eprintln!("cm mcp: cm_send {sats} sats -> {to}: syncing + building + broadcasting…");
-    let txid = chain::send(&ext, &int, to, sats, policy.max_fee_sats)?;
-    led.append(ledger::Entry::Sent {
-        seq: led.next_seq(),
-        txid: txid.to_string(),
-        sats,
-        to: to.to_string(),
-        status: ledger::Status::Pending,
-        at: ledger::now_unix(),
-    })?;
+    let txid = crate::pay::send(&mut led, &ext, &int, to, sats, policy.max_fee_sats)?;
     Ok(format!(
         "txid: {txid}\n{}",
-        storage::explorer_tx_url(&txid.to_string())
+        storage::explorer_tx_url(&txid)
     ))
 }
 

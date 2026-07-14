@@ -46,6 +46,8 @@ pub enum PolicyError {
     AddressBlocked { address: String },
     /// Mainnet with no effective spend cap — the fail-closed guard tripped.
     MainnetUncapped,
+    /// Mainnet with no fee cap — the fail-closed guard tripped.
+    MainnetNoFeeCap,
 }
 
 impl fmt::Display for PolicyError {
@@ -69,6 +71,10 @@ impl fmt::Display for PolicyError {
                 f,
                 "mainnet send refused: policy has no spend cap (set max_payment_sats or daily_limit_sats in policy.json)"
             ),
+            PolicyError::MainnetNoFeeCap => write!(
+                f,
+                "mainnet send refused: policy has no fee cap (set max_fee_sats in policy.json)"
+            ),
         }
     }
 }
@@ -76,18 +82,23 @@ impl fmt::Display for PolicyError {
 impl Error for PolicyError {}
 
 /// Mainnet fail-closed guard. On mainnet, refuse a broadcast unless the policy
-/// sets at least one spend cap (per-payment or daily). An absent or empty
-/// `policy.json` deserializes to a permissive [`Policy::default`] — fine for a
-/// signet/testnet demo, but on real money an uncapped wallet is a footgun, so
-/// we fail closed. Keyed on the *effective* caps, not on the file's existence
-/// (`{}` is unlimited and is rejected). This is the single definition of the
-/// guard; every send path routes through `chain::send`, which calls it.
+/// sets at least one spend cap (per-payment or daily) *and* a fee cap. An absent
+/// or empty `policy.json` deserializes to a permissive [`Policy::default`] — fine
+/// for a signet/testnet demo, but on real money an uncapped wallet is a footgun,
+/// so we fail closed. A spend cap alone still leaves the fee unbounded, so a fee
+/// spike (or a bug) could pay an arbitrary fee; the fee cap is required too.
+/// Keyed on the *effective* caps, not on the file's existence (`{}` is unlimited
+/// and is rejected). This is the single definition of the guard; every send path
+/// routes through `chain::send`, which calls it.
 pub fn ensure_mainnet_capped(network: Network, policy: &Policy) -> Result<(), PolicyError> {
-    if network == Network::Bitcoin
-        && policy.max_payment_sats.is_none()
-        && policy.daily_limit_sats.is_none()
-    {
+    if network != Network::Bitcoin {
+        return Ok(());
+    }
+    if policy.max_payment_sats.is_none() && policy.daily_limit_sats.is_none() {
         return Err(PolicyError::MainnetUncapped);
+    }
+    if policy.max_fee_sats.is_none() {
+        return Err(PolicyError::MainnetNoFeeCap);
     }
     Ok(())
 }
@@ -209,11 +220,27 @@ mod tests {
 
     #[test]
     fn mainnet_with_any_cap_is_allowed() {
-        // Either cap alone satisfies the guard.
-        let p = Policy { max_payment_sats: Some(100_000), ..Policy::default() };
+        // Either spend cap satisfies the spend-cap gate; a fee cap is also required.
+        let p = Policy { max_payment_sats: Some(100_000), max_fee_sats: Some(5_000), ..Policy::default() };
         assert!(ensure_mainnet_capped(Network::Bitcoin, &p).is_ok());
-        let q = Policy { daily_limit_sats: Some(250_000), ..Policy::default() };
+        let q = Policy { daily_limit_sats: Some(250_000), max_fee_sats: Some(5_000), ..Policy::default() };
         assert!(ensure_mainnet_capped(Network::Bitcoin, &q).is_ok());
+    }
+
+    #[test]
+    fn mainnet_without_fee_cap_is_refused() {
+        // A spend cap alone leaves the fee unbounded; on mainnet the guard must
+        // fail closed with a typed error until max_fee_sats is set.
+        let p = Policy { max_payment_sats: Some(100_000), ..Policy::default() };
+        assert_eq!(
+            ensure_mainnet_capped(Network::Bitcoin, &p),
+            Err(PolicyError::MainnetNoFeeCap)
+        );
+        let q = Policy { daily_limit_sats: Some(250_000), ..Policy::default() };
+        assert_eq!(
+            ensure_mainnet_capped(Network::Bitcoin, &q),
+            Err(PolicyError::MainnetNoFeeCap)
+        );
     }
 
     #[test]

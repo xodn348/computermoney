@@ -7,6 +7,7 @@ mod chain;
 mod ledger;
 mod mcp;
 mod net;
+mod pay;
 mod policy;
 mod protocol;
 mod storage;
@@ -28,6 +29,7 @@ fn ledger_status_label(confs: u32) -> &'static str {
         ledger::Status::Pending => "pending",
         ledger::Status::Soft => "soft",
         ledger::Status::Final => "final",
+        ledger::Status::Failed => "failed",
     }
 }
 
@@ -166,15 +168,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             policy.check_address(to)?;
             let (ext, int) = w.descriptors();
             eprintln!("syncing + building + broadcasting…");
-            let txid = chain::send(&ext, &int, to, sats, policy.max_fee_sats)?;
-            led.append(ledger::Entry::Sent {
-                seq: led.next_seq(),
-                txid: txid.to_string(),
-                sats,
-                to: to.to_string(),
-                status: ledger::Status::Pending,
-                at: ledger::now_unix(),
-            })?;
+            let txid = pay::send(&mut led, &ext, &int, to, sats, policy.max_fee_sats)?;
             println!("txid: {txid}");
         }
         Some("policy") => {

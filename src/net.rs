@@ -94,21 +94,13 @@ pub(crate) fn run_payer<W: Wire>(
     policy.check_address(&address)?; // OFAC blocklist, now that we know the destination
 
     eprintln!("[pay] syncing + building + broadcasting {sats} sats…");
-    let txid = chain::send(ext, int, &address, sats, policy.max_fee_sats)?;
-    led.append(Entry::Sent {
-        seq: led.next_seq(),
-        txid: txid.to_string(),
-        sats,
-        to: address,
-        status: Status::Pending,
-        at: ledger::now_unix(),
-    })?;
+    let txid = crate::pay::send(led, ext, int, &address, sats, policy.max_fee_sats)?;
     eprintln!("[pay] txid {txid}");
 
-    wire.send(&Message::Notify { txid: txid.to_string(), sats })?;
+    wire.send(&Message::Notify { txid: txid.clone(), sats })?;
     println!("paid {sats} sats. watch it reach final (3 conf):");
     println!("  cm confs {txid}");
-    println!("  {}", crate::storage::explorer_tx_url(&txid.to_string()));
+    println!("  {}", crate::storage::explorer_tx_url(&txid));
     Ok(())
 }
 
