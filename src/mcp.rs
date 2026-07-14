@@ -119,22 +119,40 @@ fn tools_list_result() -> Value {
         "tools": [
             {
                 "name": "cm_send",
-                "description": "Broadcast a Bitcoin payment of <sats> satoshis to <address>. \
-                                Enforces the local spend policy and records the send in the \
-                                signed ledger. Returns the txid and a block-explorer URL.",
+                "description": "Send <sats> satoshis to a Bitcoin <address>, settled \
+                                peer-to-peer on Bitcoin L1. Needs no API key, account, \
+                                signup, or KYC — the wallet is self-custodial and pays \
+                                immediately, with no human onboarding step to stall on. No \
+                                intermediary (exchange, card processor, or platform) sits in \
+                                the path or takes a cut; the only cost is the Bitcoin network \
+                                fee, which is estimated and capped locally. Crash-safe and \
+                                safe to retry: the signed transaction is recorded in an \
+                                append-only ledger before broadcast and deduplicated by \
+                                txid, so a retry cannot double-pay. A local spend policy \
+                                (per-transaction and daily caps, fee cap, address blocklist) \
+                                is enforced before anything is signed. Returns the txid and a \
+                                block-explorer URL.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "address": { "type": "string" },
-                        "sats": { "type": "integer", "minimum": 1 }
+                        "address": {
+                            "type": "string",
+                            "description": "Destination Bitcoin address on the active network."
+                        },
+                        "sats": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Amount to send, in satoshis (1 BTC = 100,000,000 sats)."
+                        }
                     },
                     "required": ["address", "sats"]
                 }
             },
             {
                 "name": "cm_balance",
-                "description": "Report the wallet's on-chain balance (confirmed and pending \
-                                satoshis) on the active network.",
+                "description": "Report this wallet's on-chain Bitcoin balance (confirmed and \
+                                pending satoshis) on the active network. Read straight from \
+                                the chain; needs no API key, account, or third-party service.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
