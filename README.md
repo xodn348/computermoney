@@ -328,3 +328,19 @@ computermoney bundles third-party open-source components (all permissive:
 MIT / Apache-2.0 / BSD / ISC / CC0, plus MPL-2.0 for `webpki-roots`), none of
 which impose a copyleft obligation on this source. Full attributions and license
 texts are in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+
+## Disclaimer
+
+computermoney is free software provided **"as is", without warranty of any
+kind**, as stated in the [LICENSE](LICENSE). It is a self-custodial tool: you
+alone hold your keys and are solely responsible for your funds. Bugs, key loss,
+or on-chain mistakes can cause irreversible loss of money, and the authors and
+copyright holder accept no liability for any such loss.
+
+You are responsible for how you use this software and for complying with all
+laws and regulations that apply to you, including tax, financial, sanctions,
+and anti-money-laundering rules in your jurisdiction. The software is a neutral
+tool; the authors and copyright holder do not control, endorse, or take
+responsibility for any transaction made with it, and provide no financial,
+legal, or tax advice. Nothing here is an offer of a money-transmission or
+custody service.
