@@ -314,7 +314,7 @@ all diagnostics go to stderr, so the stream stays clean for the client.
 ## License
 
 Free software under the **[GNU AGPL-3.0](LICENSE)** (`AGPL-3.0-only`),
-Copyright 2026 Junhyuk Lee. Use it, study it, modify it, redistribute it. The
+Copyright 2026 Ebsilon, Inc. Use it, study it, modify it, redistribute it. The
 one condition: if you distribute a modified version, or offer one as a network
 service, you must make its complete source available under the same license.
 See [`LICENSE`](LICENSE) for the exact terms.
