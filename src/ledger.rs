@@ -73,6 +73,15 @@ pub enum Entry {
     StatusUpdate { seq: u64, txid: String, status: Status },
 }
 
+/// One issued receive index and its collection state: awaiting payment
+/// (`txid: None`) or paid (the observed tx, its sats). Live confirmation
+/// counts are the chain's to answer (`cm_confs`), not the ledger's.
+pub struct Collection {
+    pub index: u32,
+    pub txid: Option<String>,
+    pub sats: u64,
+}
+
 /// Wall-clock unix seconds. Used to stamp Sent entries; 0 if the clock is
 /// somehow before the epoch (it isn't).
 pub fn now_unix() -> u64 {
@@ -195,6 +204,83 @@ impl Ledger {
             })
             .max()
             .unwrap_or(0)
+    }
+
+    /// Issued receive indexes with no matching Received yet — addresses handed
+    /// out but not paid. The seller daemon scans exactly these on-chain.
+    pub fn issued_unpaid(&self) -> Vec<u32> {
+        let paid: std::collections::HashSet<u32> = self
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Received { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::AddressIssued { index, .. } if !paid.contains(index) => Some(*index),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether any Sent or Received already references `txid`. The daemon calls
+    /// this before recording a chain-detected deposit so a Notify and a poll
+    /// cannot double-record the same payment.
+    pub fn has_txid(&self, txid: &str) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(e,
+                Entry::Sent { txid: t, .. } | Entry::Received { txid: t, .. } if t == txid)
+        })
+    }
+
+    /// One row per issued receive index: `txid: None` while awaiting payment, or
+    /// ledger stores a status, not a live count; a caller that needs the count
+    /// refreshes via `chain`.
+    pub fn collections(&self) -> Vec<Collection> {
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::AddressIssued { index, .. } => {
+                    let recv = self.entries.iter().find_map(|r| match r {
+                        Entry::Received { txid, sats, index: ri, .. } if ri == index => {
+                            Some((txid.clone(), *sats))
+                        }
+                        _ => None,
+                    });
+                    Some(match recv {
+                        Some((txid, sats)) => {
+                            Collection { index: *index, txid: Some(txid), sats }
+                        }
+                        None => Collection { index: *index, txid: None, sats: 0 },
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Record a chain-detected deposit as a Pending Received — but only if this
+    /// txid is not already in the ledger (a Notify may have logged it first).
+    /// Returns whether a new entry was appended. Mirrors exactly the path
+    /// `net::run_receiver` uses (next_seq + append of a Pending Received); this
+    /// is the no-listener path where the daemon polls `chain::deposits_to` and
+    /// logs what it finds without double-counting a payment the wire reported.
+    pub fn record_received(&mut self, txid: &str, sats: u64, index: u32) -> std::io::Result<bool> {
+        if self.has_txid(txid) {
+            return Ok(false);
+        }
+        let seq = self.next_seq();
+        self.append(Entry::Received {
+            seq,
+            txid: txid.to_string(),
+            sats,
+            index,
+            status: Status::Pending,
+        })?;
+        Ok(true)
     }
 
     /// Effective (latest) status for a txid, folding in any StatusUpdate.
@@ -626,6 +712,32 @@ mod tests {
         reconcile(&mut l).unwrap();
         assert_eq!(l.read_sidecar("orphantxid").unwrap(), None, "orphan sidecar dropped");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn collections_track_issued_and_paid_indexes() {
+        let path = temp_path("collections");
+        let mut l = Ledger::open(&path).unwrap();
+        l.append(Entry::AddressIssued { seq: 0, index: 0 }).unwrap();
+        l.append(Entry::AddressIssued { seq: 1, index: 1 }).unwrap();
+
+        // A deposit lands on index 0 only; the same txid is not double-recorded.
+        assert!(l.record_received("tx0", 40_000, 0).unwrap(), "first record appends");
+        assert!(!l.record_received("tx0", 40_000, 0).unwrap(), "duplicate txid is a no-op");
+
+        assert!(l.has_txid("tx0"));
+        assert!(!l.has_txid("nope"));
+        assert_eq!(l.issued_unpaid(), vec![1], "index 1 is still awaiting payment");
+
+        let cols = l.collections();
+        assert_eq!(cols.len(), 2);
+        let c0 = cols.iter().find(|c| c.index == 0).unwrap();
+        assert_eq!(c0.txid.as_deref(), Some("tx0"));
+        assert_eq!(c0.sats, 40_000);
+        let c1 = cols.iter().find(|c| c.index == 1).unwrap();
+        assert_eq!(c1.txid, None);
+        assert_eq!(c1.sats, 0);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

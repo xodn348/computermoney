@@ -83,10 +83,38 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, Box<
 /// `ledger.jsonl`. A `default` marker file at the root names the identity
 /// used when `CM_ID` is not set.
 fn config_root() -> PathBuf {
+    // CM_HOME (an absolute path) overrides the default root — lets tests and
+    // demos run several agents on one machine without sharing state.
+    if let Ok(home) = std::env::var("CM_HOME") {
+        let home = home.trim();
+        if !home.is_empty() {
+            return PathBuf::from(home);
+        }
+    }
     let mut p = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
     p.push(".config");
     p.push("computermoney");
     p
+}
+
+/// Take an exclusive, non-blocking lock on `dir` by locking `dir/"lock"`. The
+/// returned File *is* the lock — the caller must keep it alive; dropping it (or
+/// the process exiting) releases it. On contention this fails immediately rather
+/// than blocking, so a second cm process can never become a concurrent writer to
+/// the same wallet. `try_lock` is stable since 1.89 (we are on 1.94).
+pub fn lock_dir(dir: &Path) -> Result<std::fs::File, Box<dyn Error>> {
+    std::fs::create_dir_all(dir)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(dir.join("lock"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            Err(format!("another cm process holds this wallet ({})", dir.display()).into())
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+    }
 }
 
 /// The identities stored on this machine: 8-lowercase-hex subdirectory
@@ -365,6 +393,20 @@ mod tests {
         // Several without a selector refuse; none at all refuses.
         assert!(pick_identity(&ids, None, None).is_err());
         assert!(pick_identity(&[], None, None).is_err());
+    }
+
+    #[test]
+    fn lock_dir_is_exclusive() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("cm_lock_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let first = lock_dir(&dir).unwrap();
+        assert!(lock_dir(&dir).is_err(), "a second lock on a held wallet must fail");
+        drop(first); // releasing the lock lets the next acquirer in
+        let third = lock_dir(&dir).unwrap();
+        drop(third);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

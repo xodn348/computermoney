@@ -16,14 +16,15 @@ use std::error::Error;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use boringtun::noise::{Tunn, TunnResult};
+use boringtun::noise::handshake::parse_handshake_anon;
+use boringtun::noise::{Packet, Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
 
 use crate::ledger::Ledger;
 use crate::net::{self, Wire};
-use crate::protocol::{Message, Receiver};
+use crate::protocol::Message;
 use crate::wallet::Wallet;
 
 const IPV4_HEADER: usize = 20;
@@ -31,6 +32,17 @@ const WG_OVERHEAD: usize = 64; // type + counter + poly1305 tag headroom
 // Must outlast the gap between AddrResponse and Notify, which spans the
 // payer's on-chain broadcast (wallet sync + build + broadcast).
 const RECV_TIMEOUT: Duration = Duration::from_secs(120);
+// How long the initiator waits for the handshake response before giving up. A
+// seller's daemon is single-threaded, so it may be mid chain-scan when we dial
+// and not call `accept_any` for a few seconds. We do NOT retransmit: a second
+// initiation carries a new anti-replay timestamp, and on the seller's shared
+// listening socket an older buffered initiation would then be read first and
+// desync the session. Our one initiation sits in the seller's socket buffer
+// until it services it, so patient waiting is both simpler and safer than
+// retransmitting. The wait polls in short slices so a transient WouldBlock is
+// not mistaken for failure.
+const HANDSHAKE_BUDGET: Duration = Duration::from_secs(120);
+const HANDSHAKE_POLL: Duration = Duration::from_secs(2);
 
 /// This agent's WireGuard static identity (secret + public), from the seed.
 pub fn identity(wallet: &Wallet) -> Result<(StaticSecret, PublicKey), Box<dyn Error>> {
@@ -150,26 +162,45 @@ impl FramedTunnel {
         secret: StaticSecret,
         peer_pub: PublicKey,
     ) -> Result<Self, Box<dyn Error>> {
-        sock.set_read_timeout(Some(RECV_TIMEOUT))?;
+        // Poll in short slices so the wait keeps ticking even if the responder
+        // is briefly busy; the overall budget bounds it.
+        sock.set_read_timeout(Some(HANDSHAKE_POLL))?;
         let mut core = WgCore::new(secret, peer_pub);
         let init = core.handshake_init()?;
         sock.send_to(&init, peer)?;
         let mut t = Self { core, sock, peer };
 
-        // Expect the handshake response, then send the keepalive it yields.
+        // Send the initiation once, then wait for the response. A datagram that
+        // fails to authenticate (junk, another WG stack) is dropped and we keep
+        // waiting; a WouldBlock/TimedOut poll slice is not a failure — only the
+        // spent budget is.
+        let deadline = Instant::now() + HANDSHAKE_BUDGET;
         let mut buf = [0u8; 2048];
-        let (n, _from) = t.sock.recv_from(&mut buf)?;
-        match t.core.process(&buf[..n])? {
-            Step::SendBack(keepalive) => {
-                t.sock.send_to(&keepalive, t.peer)?;
+        loop {
+            match t.sock.recv_from(&mut buf) {
+                Ok((n, _from)) => match t.core.process(&buf[..n]) {
+                    Ok(Step::SendBack(keepalive)) => {
+                        t.sock.send_to(&keepalive, t.peer)?;
+                        t.sock.set_read_timeout(Some(RECV_TIMEOUT))?;
+                        return Ok(t);
+                    }
+                    Ok(_) => {} // not the response yet — keep waiting
+                    Err(e) => eprintln!("[wg] dropped an unauthenticated datagram ({e})"),
+                },
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
+                Err(e) => return Err(e.into()),
             }
-            _ => return Err("handshake: expected a response".into()),
+            if Instant::now() >= deadline {
+                return Err("handshake timed out: peer did not respond".into());
+            }
         }
-        Ok(t)
     }
 
     /// Responder: wait for an inbound handshake, answer it, and bind to the
-    /// peer that initiated.
+    /// peer that initiated. The daemon now accepts with `accept_any` (which
+    /// learns the peer key from the handshake), so this pinned-key responder
+    /// is retained only as a tested tunnel primitive — hence `allow(dead_code)`.
+    #[allow(dead_code)]
     pub fn accept(
         sock: UdpSocket,
         secret: StaticSecret,
@@ -204,6 +235,72 @@ impl FramedTunnel {
         }
         Ok(t)
     }
+
+    /// Responder for a shared, long-lived listening socket: read one datagram
+    /// and, if it is a WireGuard handshake initiation, learn the initiator's
+    /// static key from the handshake itself instead of pinning one expected
+    /// peer up front. Answer it and hand back a tunnel bound to that peer,
+    /// plus its public key as 64 lowercase hex chars (== the dialer's `id_hex`).
+    ///
+    /// The socket is shared with the caller's daemon loop, which interleaves
+    /// timers: honor its pre-set read timeout and return `Ok(None)` when the
+    /// read would block, so the loop keeps ticking. Junk or stale datagrams —
+    /// anything that is not a parseable, authenticatable initiation — also
+    /// yield `Ok(None)`; they must never error the loop. The returned tunnel
+    /// owns its own `try_clone` of the socket, so the daemon can keep accepting
+    /// later sessions on the same port after this one ends.
+    pub fn accept_any(
+        wallet: &crate::wallet::Wallet,
+        socket: &UdpSocket,
+    ) -> Result<Option<(FramedTunnel, String)>, Box<dyn Error>> {
+        let (secret, public) = identity(wallet)?;
+
+        let mut buf = [0u8; 2048];
+        let (n, from) = match socket.recv_from(&mut buf) {
+            Ok(v) => v,
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let packet = &buf[..n];
+
+        // Only a handshake initiation carries the initiator's static key.
+        // Parse it anonymously to learn who is dialing; anything else (data for
+        // a session we don't hold, scans, truncated junk, a failed AEAD open)
+        // is not the start of a new session, so drop it and let the loop retry.
+        let hs = match Tunn::parse_incoming_packet(packet) {
+            Ok(Packet::HandshakeInit(init)) => match parse_handshake_anon(&secret, &public, &init) {
+                Ok(hs) => hs,
+                Err(_) => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let peer_pub = PublicKey::from(hs.peer_static_public);
+        let peer_pub_hex = hex32(peer_pub.as_bytes());
+
+        // Drive the real handshake pinned to the learned peer by feeding it the
+        // SAME initiation packet, then send the response back to the source.
+        let mut core = WgCore::new(secret, peer_pub);
+        let resp = match core.process(packet)? {
+            Step::SendBack(resp) => resp,
+            _ => return Ok(None),
+        };
+        let sock = socket.try_clone()?;
+        sock.set_read_timeout(Some(RECV_TIMEOUT))?;
+        sock.send_to(&resp, from)?;
+        Ok(Some((Self { core, sock, peer: from }, peer_pub_hex)))
+    }
+}
+
+/// Encode 32 bytes as 64 lowercase hex chars (matches `Wallet::id_hex`).
+fn hex32(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(64);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 impl Wire for FramedTunnel {
@@ -250,31 +347,7 @@ impl Wire for FramedTunnel {
     }
 }
 
-/// Run the receive protocol over a WireGuard tunnel. Waits for a peer to
-/// open the tunnel (its public key must match `peer_pub_hex`), then serves
-/// the payment exchange into the signed ledger.
-pub fn serve(
-    wallet: &Wallet,
-    ledger_path: &Path,
-    bind: &str,
-    peer_pub_hex: &str,
-) -> Result<(), Box<dyn Error>> {
-    let (secret, _public) = identity(wallet)?;
-    let peer_pub = parse_public_key(peer_pub_hex)?;
-    let mut led = Ledger::open_with_identity(ledger_path, wallet.signing_keypair()?)?;
-    let mut rx = Receiver::new(wallet, led.next_address_index());
-
-    let sock = UdpSocket::bind(bind)?;
-    eprintln!("cm receive: tunnel listening on {bind}");
-    eprintln!("  ledger:  {}", ledger_path.display());
-    eprintln!("  balance: {} sats final", led.balance());
-
-    let mut tunnel = FramedTunnel::accept(sock, secret, peer_pub)?;
-    eprintln!("[wg] tunnel established with peer");
-    net::run_receiver(&mut tunnel, &mut rx, &mut led)
-}
-
-/// Pay a remote `cm receive` over a WireGuard tunnel.
+/// Pay a remote seller over a WireGuard tunnel.
 pub fn pay(
     wallet: &Wallet,
     ledger_path: &Path,
@@ -361,6 +434,41 @@ mod tests {
         let client = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut t = FramedTunnel::connect(client, responder_addr, a_sec, b_pub).unwrap();
         let msg = Message::Chat { text: "over wireguard".into() };
+        t.send(&msg).unwrap();
+        let echo = t.recv().unwrap().unwrap();
+        assert_eq!(echo, msg);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn accept_any_learns_the_dialers_key_and_round_trips() {
+        let (a, _) = Wallet::generate().unwrap();
+        let (b, _) = Wallet::generate().unwrap();
+        let (a_sec, _a_pub) = identity(&a).unwrap();
+        let (_b_sec, b_pub) = identity(&b).unwrap();
+
+        // The responder never knows the dialer up front; a short read timeout
+        // lets accept_any spin like a daemon loop until the initiation lands.
+        let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+        responder.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        let responder_addr = responder.local_addr().unwrap();
+        let a_id = a.id_hex().unwrap();
+
+        let server = std::thread::spawn(move || {
+            loop {
+                if let Some((mut t, peer_hex)) = FramedTunnel::accept_any(&b, &responder).unwrap() {
+                    // The learned static key is exactly the dialer's identity.
+                    assert_eq!(peer_hex, a_id);
+                    let got = t.recv().unwrap().unwrap();
+                    t.send(&got).unwrap();
+                    return;
+                }
+            }
+        });
+
+        let client = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let mut t = FramedTunnel::connect(client, responder_addr, a_sec, b_pub).unwrap();
+        let msg = Message::AddrRequest { sats: 12_345 };
         t.send(&msg).unwrap();
         let echo = t.recv().unwrap().unwrap();
         assert_eq!(echo, msg);

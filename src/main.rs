@@ -11,6 +11,7 @@ mod net;
 mod pay;
 mod policy;
 mod protocol;
+mod serve;
 mod storage;
 mod tunnel;
 mod wallet;
@@ -97,24 +98,49 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // payer tunnels to, addressed by our ed25519 card key. Opt-in —
             // publishing ties this endpoint to the card identity, so it runs
             // only when the agent deliberately wants to be reachable.
-            let usage = "usage: publish <your-host:port>";
-            let endpoint = args.get(2).ok_or(usage)?;
+            // Zero or more endpoints (usage: publish [host:port ...]): a
+            // dial-out-only buyer publishes none (just its WG identity), a
+            // dual-stack peer publishes several.
+            let ep: Vec<String> = args[2..].to_vec();
             let w = storage::load_wallet()?;
             let card = discover::Card {
-                wg: format!("{}@{}", w.id_hex()?, endpoint),
+                wg: w.id_hex()?,
+                ep,
                 at: ledger::now_unix(),
             };
             eprintln!("publishing card to the DHT…");
             discover::publish(&*w.wg_secret_bytes()?, &card)?;
-            println!("published: {}", card.wg);
+            if card.ep.is_empty() {
+                println!("published: {} (no endpoint — dial-out only)", card.wg);
+            } else {
+                println!("published: {} @ {}", card.wg, card.ep.join(", "));
+            }
             eprintln!("(peers reach you by your card key: cm id)");
         }
-        Some("receive") => {
-            let usage = "usage: receive <payer-pubkey-hex> [bind-udp-addr]";
-            let peer = args.get(2).ok_or(usage)?;
-            let bind = args.get(3).map(String::as_str).unwrap_or("0.0.0.0:51820");
+        Some("serve") => {
+            // The resident seller: one daemon that republishes its card,
+            // watches the chain, and accepts any buyer's tunnel. `--bind` sets
+            // the UDP listen address; `--ep` is repeatable and lists the
+            // endpoints the card advertises (none = card key still resolves,
+            // dial-out only).
+            let mut bind = "0.0.0.0:51820".to_string();
+            let mut eps: Vec<String> = Vec::new();
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--bind" => {
+                        bind = args.get(i + 1).ok_or("--bind needs an address")?.clone();
+                        i += 2;
+                    }
+                    "--ep" => {
+                        eps.push(args.get(i + 1).ok_or("--ep needs a host:port")?.clone());
+                        i += 2;
+                    }
+                    other => return Err(format!("unknown serve argument: {other}").into()),
+                }
+            }
             let w = storage::load_wallet()?;
-            tunnel::serve(&w, &storage::ledger_path(&w)?, bind, peer)?;
+            serve::run(&w, &storage::ledger_path(&w)?, &bind, eps)?;
         }
         Some("pay") => {
             // Two forms. `pay <pubkey>@<host:port> <sats>` is the manual path
@@ -126,22 +152,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let peer = args.get(2).ok_or(usage)?;
             let sats: u64 = args.get(3).ok_or(usage)?.parse()?;
             let w = storage::load_wallet()?;
-            let (peer_pub, peer_addr) = match peer.split_once('@') {
-                Some((pubkey, addr)) => (pubkey.to_string(), addr.to_string()),
+            match peer.split_once('@') {
+                Some((peer_pub, peer_addr)) => {
+                    tunnel::pay(&w, &storage::ledger_path(&w)?, peer_addr, peer_pub, sats)?;
+                }
                 None => {
                     let key = discover::parse_card_key(peer)?;
                     eprintln!("resolving card {}… (DHT)", &peer[..8]);
                     let card = discover::resolve(&key)?
                         .ok_or("no card found on the DHT for that key")?;
-                    let (pubkey, addr) = card
-                        .wg
-                        .split_once('@')
-                        .ok_or("resolved card has a malformed wg endpoint")?;
-                    eprintln!("found endpoint: {}", card.wg);
-                    (pubkey.to_string(), addr.to_string())
+                    if card.ep.is_empty() {
+                        return Err(
+                            "peer published no endpoint (not accepting inbound sessions)".into(),
+                        );
+                    }
+                    // Try each published endpoint (v4, v6, …) in order until
+                    // one session succeeds; if all fail, surface the last error.
+                    let ledger = storage::ledger_path(&w)?;
+                    let mut last_err = None;
+                    for addr in &card.ep {
+                        eprintln!("dialing {} @ {addr}…", card.wg);
+                        match tunnel::pay(&w, &ledger, addr, &card.wg, sats) {
+                            Ok(()) => {
+                                last_err = None;
+                                break;
+                            }
+                            Err(e) => last_err = Some(e),
+                        }
+                    }
+                    if let Some(e) = last_err {
+                        return Err(e);
+                    }
                 }
-            };
-            tunnel::pay(&w, &storage::ledger_path(&w)?, &peer_addr, &peer_pub, sats)?;
+            }
         }
         Some("mcp") => {
             // Run the stdio MCP server: an AI agent drives cm_send / cm_balance
@@ -154,7 +197,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  cm setup                         create a wallet, show how to fund and transact");
             eprintln!("  cm id                            print your card key (the one thing you share)");
             eprintln!("  cm publish <your-host:port>      announce your WireGuard endpoint on the DHT");
-            eprintln!("  cm receive <payer-pubkey> [bind] wait for a payment over WireGuard");
+            eprintln!("  cm serve [--bind a] [--ep h:p]…  resident seller: republish, watch chain, accept payments");
             eprintln!("  cm pay <card-key> <sats>         discover -> talk -> settle, in one command");
             eprintln!("  cm pay <pubkey@host:port> <sats> pay a known endpoint directly (no DHT)");
             eprintln!("  cm balance                       on-chain balance");

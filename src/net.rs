@@ -59,6 +59,12 @@ pub(crate) fn run_receiver<W: Wire>(
                     "[recv] {txid}: {confs} confs, {changed} update(s), balance {} sats final",
                     led.balance()
                 );
+                // Notify is the payer's last word — the money is on-chain and
+                // recorded, so this session is done. UDP has no close, so if we
+                // kept reading we would block a full RECV_TIMEOUT waiting for a
+                // message that never comes, starving the next buyer. Return now
+                // and free the socket immediately.
+                return Ok(());
             }
             Message::Chat { text } => eprintln!("[recv] chat: {text}"),
             Message::AddrResponse { .. } => {} // a client wouldn't send this

@@ -110,6 +110,50 @@ pub fn broadcast(tx: &Transaction) -> Result<Txid, Box<dyn std::error::Error>> {
     Ok(tx.compute_txid())
 }
 
+/// A payment observed landing on one of our addresses. `sats` is the sum of
+/// this tx's outputs paying that exact address (a tx may pay it in several
+/// outputs, and also pay change/others which must not count); `confirmations`
+/// mirrors [`confirmations`] — 0 if unconfirmed, else tip - height + 1.
+pub struct Deposit {
+    pub txid: String,
+    pub sats: u64,
+    pub confirmations: u32,
+}
+
+/// Every deposit paying `addr`, newest first. The seller daemon polls this to
+/// notice money arriving with NO listener — there is no notification, the chain
+/// is the only proof of receipt. A stateless read: no wallet, no descriptors,
+/// just the address's on-chain history from esplora.
+pub fn deposits_to(addr: &str) -> Result<Vec<Deposit>, Box<dyn std::error::Error>> {
+    let address = Address::from_str(addr)?.require_network(storage::network())?;
+    let spk = address.script_pubkey();
+
+    let client = esplora_client::Builder::new(&storage::esplora_endpoint()).build_blocking();
+    let txs = client.get_address_txs(&address, None)?;
+    let tip = client.get_height()?;
+
+    let mut out = Vec::new();
+    for tx in txs {
+        // Count only the outputs paying this address; a tx that merely spends
+        // through us (change to another of our keys, payments to third parties)
+        // must not be booked as a deposit to this address.
+        let sats: u64 = tx.vout.iter().filter(|v| v.scriptpubkey == spk).map(|v| v.value).sum();
+        if sats == 0 {
+            continue;
+        }
+        let confirmations = if !tx.status.confirmed {
+            0
+        } else {
+            match tx.status.block_height {
+                Some(h) => tip.saturating_sub(h) + 1,
+                None => 0,
+            }
+        };
+        out.push(Deposit { txid: tx.txid.to_string(), sats, confirmations });
+    }
+    Ok(out)
+}
+
 /// The outcome of trying to (re)broadcast a stored signed tx during reconcile.
 pub enum Rebroadcast {
     /// Accepted by the network, or already known to it — the tx is alive and

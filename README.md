@@ -176,14 +176,16 @@ the Bitcoin network* (required to actually settle).
    identity directory (balance, work queue, crash recovery).
 
 **Two honest gaps.** (1) The *decision* to pay — the trigger for step 1 — lives outside
-`cm` today (a human, or an agent that execs `cm pay`); `cm receive` is already an unattended
-daemon, so `cm` is the autonomous *hands*, not yet the *brain*. (2) Step 5 is incomplete:
-`reconcile` confirms the txid is buried but does **not** yet verify the transaction pays B's
-issued address for the claimed amount, so a lying `Notify` can record a phantom credit — the
-top correctness fix is to verify the on-chain output inside `reconcile`.
+`cm` today (a human, or an agent that execs `cm pay` / calls the `cm_pay` MCP tool); the
+seller's `cm serve` is an unattended daemon, so `cm` is the autonomous *hands*, not yet the
+*brain*. (2) Step 5 is incomplete: `reconcile` confirms the txid is buried but does **not**
+yet verify the transaction pays B's issued address for the claimed amount, so a lying
+`Notify` can record a phantom credit — the top correctness fix is to verify the on-chain
+output inside `reconcile`. (The seller daemon's chain-watch already books deposits straight
+from the chain, which is the honest signal; the `Notify` path is the shortcut being hardened.)
 
 > **Wire-level detail:** [`docs/payment-flow.md`](docs/payment-flow.md) walks through the
-> exact function-by-function order inside `cm pay` and `cm receive` — the two stacked
+> exact function-by-function order inside `cm pay` and the seller daemon — the two stacked
 > handshakes, where `InvalidMac` comes from, and the message framing.
 
 ## Network status
@@ -225,13 +227,21 @@ the whole thing.
 ```
 cm setup                          create a wallet, then show identity, fund address, balance
 cm id                             print your card key — the one thing you share
-cm publish <your-host:port>       announce your WireGuard endpoint on the DHT
-cm receive <payer-pubkey> [bind]  wait for a payment over WireGuard (bind 0.0.0.0:51820)
+cm serve [--bind a] [--ep a]...   run the seller daemon: publish, accept buyers, watch the chain
 cm pay <card-key> <sats>          discover -> talk -> settle, in one command
 cm pay <pubkey@host:port> <sats>  pay a known endpoint directly (no DHT)
 cm balance                        sync from the chain, print balance
-cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-agent clients
+cm mcp                            stdio MCP server for AI-agent clients (tools below)
 ```
+
+The buyer needs nothing running — `cm pay` (or the `cm_pay` MCP tool) does discover →
+talk → settle in one shot. The seller runs one resident process, `cm serve`, which
+republishes its DHT card before it expires, answers any buyer's WireGuard handshake (the
+buyer's key is learned from the handshake, not configured), and polls the chain so a
+payment is recorded even if no tunnel was live when it landed. `--ep` is the endpoint
+published on the card (repeatable for a v4 + v6 pair); omit it to stay dial-out only.
+Publishing an endpoint exposes that IP to every card-key holder, so publish a hop/VPS
+address, not your home IP, or none.
 
 Wallet unlock: an encrypted seed (`CM_PASSPHRASE`) or the stored mnemonic; `CM_MNEMONIC`
 overrides both.
@@ -246,22 +256,54 @@ identity is chosen by `CM_ID=<id prefix>`, or the `default` marker (the first id
 created), or — with only one wallet — automatically. `policy.json` stays at the config root
 (global; `CM_POLICY` overrides).
 
+## Two agents on signet, end to end
+
+Run a seller and a buyer as two separate identities on one machine (`CM_HOME` gives each its
+own wallet store) and watch the whole pipeline — discover, talk, settle — move real signet
+coins. Everything is signet, so nothing here spends mainnet BTC.
+
+```sh
+# --- Seller (agent B): its own store, its own wallet, a resident daemon ---
+export CM_NETWORK=signet
+CM_HOME=~/cm-seller cm setup                 # prints B's card key + a funding address
+CM_HOME=~/cm-seller cm serve --bind 0.0.0.0:51820 --ep <seller-host>:51820
+#   -> publishes B's card to the DHT, then waits, republishing every 45 min and
+#      polling the chain. On localhost use --bind 127.0.0.1:51820 --ep 127.0.0.1:51820.
+
+# --- Buyer (agent A): a different store, fund it from the signet faucet once ---
+CM_HOME=~/cm-buyer  cm setup                  # prints A's funding address
+#   fund that address at https://faucet.mutinynet.com/ , wait one block, then:
+CM_HOME=~/cm-buyer  cm pay <B-card-key> 5000  # discover -> talk -> settle, one command
+```
+
+What happens, in order: A resolves B's card key on the DHT to B's endpoint, opens a WireGuard
+tunnel to it, asks for a fresh address over that tunnel, broadcasts a 5000-sat signet payment
+to it, and tells B the txid. B's daemon issues the address, records the incoming payment, and
+its chain-watch advances it to final once it confirms — no listener had to be armed in
+advance. Check either side any time with `CM_HOME=… cm balance`, and on the seller list every
+collection with the `cm_collections` MCP tool. Swap `cm pay` for the `cm_pay` MCP tool and the
+same flow runs from *"pay 5000 sats to `<B-card-key>`"* in an MCP client, with no shell.
+
 ## MCP server — natural-language payments
 
 `cm mcp` runs `cm` as a **[Model Context Protocol](https://modelcontextprotocol.io) server**
-over stdio, so any MCP client (Claude Code, Claude Desktop, or your own agent) can pay
-Bitcoin from a plain instruction — *"send 5000 sats to tb1p…"* — with no shell, no flags, no
-key handling. It exposes exactly two tools and nothing else:
+over stdio, so any MCP client (Claude Code, Claude Desktop, or your own agent) can drive the
+whole pipeline from a plain instruction — *"pay 5000 sats to `<card-key>`"* — with no shell, no
+flags, no key handling. It exposes exactly these tools and nothing else:
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `cm_send` | `address` (string), `sats` (integer ≥ 1) | policy-gates, builds, Schnorr-signs, and broadcasts one on-chain payment; returns the txid + explorer URL |
+| `cm_pay` | `card_key` (64-hex), `sats` (integer ≥ 1) | the flagship verb: resolve the card on the DHT, tunnel to the peer, settle on-chain; returns the txid + explorer URL |
+| `cm_send` | `address` (string), `sats` (integer ≥ 1) | raw on-chain send to an address you already hold; policy-gated, Schnorr-signed, broadcast; returns the txid + explorer URL |
 | `cm_balance` | *(none)* | confirmed + pending balance on the active network |
+| `cm_confs` | `txid` (string) | a payment's confirmation count + status (pending/soft/final), and advances the ledger |
+| `cm_collections` | *(none)* | per issued receive index: address, awaiting/paid, txid, sats — how a seller agent knows a payment landed |
 
-`cm_send` is the same ledger-first send path `cm pay` settles through: the agent supplies `{address, sats}` and nothing
-else — **the seed and passphrase are never tool arguments.** The wallet is unlocked **once** at
-startup (a single KDF pass) and held for the process lifetime, so each call is fast and the
-secret never crosses the tool boundary.
+`cm_pay` and `cm_send` are the same ledger-first path `cm pay` settles through: the agent supplies
+only `{card_key/address, sats}` — **the seed and passphrase are never tool arguments.** The wallet
+is unlocked **once** at startup (a single KDF pass) and held for the process lifetime, so each call
+is fast and the secret never crosses the tool boundary. Startup also reconciles the ledger, so a
+payment that confirmed while the client was away is healed on the next session.
 
 The [installer](#install) already does this for Claude Code on a signet demo wallet. To wire it
 **manually** — Claude Desktop, another client, or mainnet — point your MCP config (`.mcp.json`

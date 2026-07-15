@@ -30,13 +30,20 @@ const SALT: &[u8] = b"cm";
 const MAX_CARD_BYTES: usize = 1000;
 
 /// An agent's signed business card: where to reach it. Deliberately tiny.
-/// `wg` is `"<x25519-pub-hex>@<host:port>"` — the WireGuard identity and
-/// endpoint a payer tunnels to. `at` is the publication time in unix
-/// seconds, and doubles as the record's monotonic `seq` (a later publish
-/// supersedes an earlier one).
+/// `wg` is the 64-hex x25519 WireGuard public key — the agent's tunnel
+/// identity, always present. `ep` is the optional list of endpoints a payer
+/// dials, each `"host:port"` (or `"[v6]:port"` for IPv6); there may be
+/// several (a v4 and a v6 address, per the dual-stack decision) or none.
+/// Endpoints are optional because a dial-out-only buyer never accepts inbound
+/// sessions and so publishes no address. Publishing an endpoint exposes that
+/// IP to every holder of the card key, so operators publish a hop/VPS address
+/// or nothing. `at` is the publication time in unix seconds, and doubles as
+/// the record's monotonic `seq` (a later publish supersedes an earlier one).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Card {
     pub wg: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ep: Vec<String>,
     pub at: u64,
 }
 
@@ -140,11 +147,26 @@ mod tests {
 
     #[test]
     fn card_serializes_small() {
+        // Dual-stack card: a v4 and a v6 endpoint still fits the BEP-44 cap.
         let card = Card {
-            wg: format!("{}@1.2.3.4:51820", "ab".repeat(32)),
+            wg: "ab".repeat(32),
+            ep: vec!["1.2.3.4:51820".into(), "[2001:db8::1]:51820".into()],
             at: 1_760_000_000,
         };
         let bytes = serde_json::to_vec(&card).unwrap();
         assert!(bytes.len() < MAX_CARD_BYTES, "card must fit BEP-44 cap");
+    }
+
+    #[test]
+    fn ep_less_card_round_trips() {
+        // A dial-out-only buyer publishes no endpoint: `ep` is skipped on the
+        // wire and defaults back to empty on read.
+        let card = Card { wg: "cd".repeat(32), ep: vec![], at: 42 };
+        let bytes = serde_json::to_vec(&card).unwrap();
+        assert!(!bytes.windows(2).any(|w| w == b"ep"), "empty ep is not serialized");
+        let back: Card = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.wg, card.wg);
+        assert!(back.ep.is_empty());
+        assert_eq!(back.at, card.at);
     }
 }
