@@ -57,7 +57,8 @@ deterministic.
        ├── m/86'/c'/0'/0/n  →  Taproot receive address    (secp256k1) │
        ├── m/86'/c'/0'/1/n  →  Taproot change address     (secp256k1) │
        ├── m/86'/c'/0'/2/0  →  Schnorr ledger-signing key (secp256k1) │
-       └── m/86'/c'/0'/3/0  →  WireGuard static key          (X25519) ┘
+       └── m/86'/c'/0'/3/0  →  network identity: WireGuard (X25519)  ┘
+                               + DHT card key (ed25519), one seed
 ```
 
 A Bitcoin address is *derived*, never *issued*: it is just an encoding of a public key,
@@ -217,21 +218,18 @@ Windows is not supported for now (it builds, but `ring` needs `nasm` there).
 
 ## Commands
 
-WireGuard is the transport, so the surface is two verbs: `receive` and `pay`. A
-peer *is* its public key — `cm pay <pubkey>@<host:port> <sats>` is the whole thing.
+The surface is the pipeline: **discover** (Mainline DHT) → **talk** (WireGuard) →
+**settle** (Bitcoin L1). A peer *is* its card key — `cm pay <card-key> <sats>` is
+the whole thing.
 
 ```
-cm setup                          create+seal a wallet, then show identity, fund address, balance
-cm init                           create a wallet (seals the seed if CM_PASSPHRASE is set)
-cm id                             print your identity — the pubkey a peer pays to
+cm setup                          create a wallet, then show identity, fund address, balance
+cm id                             print your card key — the one thing you share
+cm publish <your-host:port>       announce your WireGuard endpoint on the DHT
 cm receive <payer-pubkey> [bind]  wait for a payment over WireGuard (bind 0.0.0.0:51820)
-cm pay <pubkey@host:port> <sats>  pay a peer over WireGuard
-
+cm pay <card-key> <sats>          discover -> talk -> settle, in one command
+cm pay <pubkey@host:port> <sats>  pay a known endpoint directly (no DHT)
 cm balance                        sync from the chain, print balance
-cm address [n]                    a receive address (to fund the wallet)
-cm send <addr> <sats>             raw on-chain send to an address (policy-gated)
-cm confs <txid>                   confirmation count for a txid
-cm policy                         show the active spend policy (limits / fee / blocklist)
 cm mcp                            stdio MCP server (cm_send, cm_balance) for AI-agent clients
 ```
 
@@ -240,13 +238,13 @@ overrides both.
 Network: `CM_NETWORK` = `mainnet` (default) | `testnet` | `signet`; `CM_ESPLORA` overrides
 the esplora endpoint.
 
-**Identities.** Each `cm init` creates one agent, stored in its own directory
-`~/.config/computermoney/<id8>/` — where `<id8>` is the first 8 hex chars of the identity
-`cm id` prints — holding that agent's `mnemonic` (or `seed.enc`) and `ledger.jsonl`. So two
-agents on one machine never share, or cross-sign, a ledger. Run `cm init` twice and you have
-two agents. The acting identity is chosen by `CM_ID=<id prefix>`, or the `default` marker
-(the first identity created), or — with only one wallet — automatically. `policy.json` stays
-at the config root (global; `CM_POLICY` overrides).
+**Identities.** `cm setup` creates one agent, stored in its own directory
+`~/.config/computermoney/<id8>/` — the first 8 hex chars of its WireGuard identity —
+holding that agent's `mnemonic` (or `seed.enc`) and `ledger.jsonl`. So two agents on one
+machine never share, or cross-sign, a ledger. With several wallets in the store, the acting
+identity is chosen by `CM_ID=<id prefix>`, or the `default` marker (the first identity
+created), or — with only one wallet — automatically. `policy.json` stays at the config root
+(global; `CM_POLICY` overrides).
 
 ## MCP server — natural-language payments
 
@@ -260,7 +258,7 @@ key handling. It exposes exactly two tools and nothing else:
 | `cm_send` | `address` (string), `sats` (integer ≥ 1) | policy-gates, builds, Schnorr-signs, and broadcasts one on-chain payment; returns the txid + explorer URL |
 | `cm_balance` | *(none)* | confirmed + pending balance on the active network |
 
-`cm_send` is the same code path as `cm send`: the agent supplies `{address, sats}` and nothing
+`cm_send` is the same ledger-first send path `cm pay` settles through: the agent supplies `{address, sats}` and nothing
 else — **the seed and passphrase are never tool arguments.** The wallet is unlocked **once** at
 startup (a single KDF pass) and held for the process lifetime, so each call is fast and the
 secret never crosses the tool boundary.
@@ -269,7 +267,7 @@ The [installer](#install) already does this for Claude Code on a signet demo wal
 **manually** — Claude Desktop, another client, or mainnet — point your MCP config (`.mcp.json`
 or `claude_desktop_config.json`) at the `cm` binary with `mcp`, plus the network in the env.
 The registration carries **no secret**: the server resolves the identity from the store on
-disk (run `cm init` first). Signet demo:
+disk (run `cm setup` first). Signet demo:
 
 ```json
 {
