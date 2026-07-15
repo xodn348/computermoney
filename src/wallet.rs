@@ -111,28 +111,18 @@ impl Wallet {
         Ok(s)
     }
 
-    /// The agent's WireGuard static secret as raw 32 bytes, derived at
-    /// branch 3 (m/86'/{coin}'/0'/3/0) — reserved for the tunnel identity,
+    /// The agent's network-identity secret as raw 32 bytes, derived at
+    /// branch 3 (m/86'/{coin}'/0'/3/0) — reserved for the network identity,
     /// distinct from the receive (0/1) and ledger-signing (2) branches.
-    /// Pillar 1: one mnemonic secures both the money and the tunnel. The
-    /// caller builds an X25519 key from these bytes; they zeroize on drop.
+    /// One Curve25519 seed serves both network roles: `tunnel` clamps it
+    /// into an X25519 static secret (WireGuard), and `discover` hashes it
+    /// into an ed25519 signing key (the BEP-44 card). The two derivations
+    /// produce unrelated scalars, so a signature can never be replayed as a
+    /// DH key or vice versa. Pillar 1: one mnemonic secures the money, the
+    /// tunnel, and the card. The bytes zeroize on drop.
     pub fn wg_secret_bytes(&self) -> Result<Zeroizing<[u8; 32]>, Error> {
         let secp = Secp256k1::new();
         let path = DerivationPath::from_str(&format!("m/86'/{}'/0'/3/0", self.coin_type()))?;
-        let child = self.root.derive_priv(&secp, &path)?;
-        Ok(Zeroizing::new(child.private_key.secret_bytes()))
-    }
-
-    /// The agent's DHT business-card secret as raw 32 bytes, derived at
-    /// branch 4 (m/86'/{coin}'/0'/4/0) — the ed25519 seed for the signed
-    /// card an agent publishes to the Mainline DHT (BEP-44 is ed25519-only).
-    /// Reserved for discovery identity, distinct from receive (0/1),
-    /// ledger-signing (2), and the tunnel (3). Same one-mnemonic derivation
-    /// as the WG leaf; the caller (`discover`) turns these bytes into an
-    /// ed25519 signing key. They zeroize on drop.
-    pub fn card_secret_bytes(&self) -> Result<Zeroizing<[u8; 32]>, Error> {
-        let secp = Secp256k1::new();
-        let path = DerivationPath::from_str(&format!("m/86'/{}'/0'/4/0", self.coin_type()))?;
         let child = self.root.derive_priv(&secp, &path)?;
         Ok(Zeroizing::new(child.private_key.secret_bytes()))
     }

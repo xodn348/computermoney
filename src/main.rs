@@ -130,7 +130,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("id") => {
             let w = storage::load_wallet()?;
-            let card = discover::card_pubkey_hex(&*w.card_secret_bytes()?);
+            let card = discover::card_pubkey_hex(&*w.wg_secret_bytes()?);
             println!("{card}");
             eprintln!("(your card key — the one thing you share. publish where to reach you with");
             eprintln!(" `cm publish <your-host:port>`; a peer then pays you with `cm pay {card} <sats>`.)");
@@ -148,7 +148,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 at: ledger::now_unix(),
             };
             eprintln!("publishing card to the DHT…");
-            discover::publish(&*w.card_secret_bytes()?, &card)?;
+            discover::publish(&*w.wg_secret_bytes()?, &card)?;
             println!("published: {}", card.wg);
             eprintln!("(peers reach you by your card key: cm id)");
         }

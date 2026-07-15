@@ -42,7 +42,10 @@ pub struct Card {
 
 /// The ed25519 card public key (32 bytes) for a card secret. This is the
 /// agent's shareable discovery identity — the one thing a peer needs to
-/// resolve the card.
+/// resolve the card. The secret is the wallet's branch-3 network-identity
+/// seed (the same 32 bytes WireGuard clamps into X25519): ed25519 hashes
+/// the seed before use, so the card scalar and the tunnel scalar are
+/// unrelated even though one seed backs both.
 pub fn card_pubkey_bytes(card_secret: &[u8; 32]) -> [u8; 32] {
     SigningKey::from_bytes(card_secret).verifying_key().to_bytes()
 }
