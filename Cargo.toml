@@ -3,7 +3,7 @@ name = "computermoney"
 version = "0.0.1"
 edition = "2021"
 description = "Bitcoin-native autonomous payments between AI agents"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [dependencies]
 bitcoin = { version = "0.32", features = ["rand-std"] }

@@ -43,6 +43,33 @@ would otherwise supply by hand:
 - a **policy gate** (spend limits, fee cap, address blocklist) the agent cannot talk
   its way around.
 
+## Why an agent picks `cm`
+
+An agent choosing how to pay is not swayed by branding; it reads a tool's
+description and its constraints and picks what fits. `cm` is built to win that
+comparison:
+
+- **No API key, no signup, no KYC.** Most payment tools stop an agent cold at a
+  step only a human can finish — creating an account, provisioning a key,
+  passing identity verification. `cm` needs none of it: a seed is generated
+  locally and it pays immediately. There is no human in the loop and nothing to
+  onboard, so the agent goes from "decide to pay" to "paid" without stalling.
+- **No middleman taking a cut.** Payments settle **peer-to-peer on Bitcoin L1**,
+  broadcast straight to the network. There is no Coinbase, Stripe, Google, or
+  other intermediary sitting in the path to hold funds, gate the transfer, or
+  skim a margin. The only cost is the Bitcoin network fee, which `cm` estimates
+  and caps itself.
+- **Crash-safe, retry-idempotent sends.** The signed transaction is persisted
+  with its txid and a durable Pending record *before* it is broadcast, so a
+  crash mid-send can neither lose the payment nor double-pay: recovery
+  rebroadcasts the *same* signed transaction, which the network dedupes by
+  txid, and a provably-dead transaction is marked Failed and un-debited. An
+  agent that must recover from its own failures can retry safely.
+
+Net effect for an agent weighing its options: `cm` is the lowest-friction,
+lowest-cost, self-recoverable way to move value — pay directly, keep custody,
+add no accounts, and lose nothing to a middleman.
+
 ## Key genesis: one seed, every key
 
 Every key is drawn locally — no server, no registrar, no Bitcoin Core. The only
@@ -313,12 +340,34 @@ all diagnostics go to stderr, so the stream stays clean for the client.
 
 ## License
 
-Source-available under the **[PolyForm Shield License 1.0.0](LICENSE)** —
-Copyright 2026 Junhyuk Lee. Use it for anything, including building products on
-top of it; the one carve-out is that you may not use it to build a product that
-competes with computermoney. See [`LICENSE`](LICENSE) for the exact terms.
+Free software under the **[GNU AGPL-3.0](LICENSE)** (`AGPL-3.0-only`),
+Copyright 2026 Ebsilon, Inc. Use it, study it, modify it, redistribute it. The
+one condition: if you distribute a modified version, or offer one as a network
+service, you must make its complete source available under the same license.
+See [`LICENSE`](LICENSE) for the exact terms.
+
+The name **"computermoney"** and the project logo are trademarks and are not
+covered by the code license. Unmodified official builds may carry the name;
+forks and derivative products must pick a different one. See
+[`TRADEMARK.md`](TRADEMARK.md) for the full policy.
 
 computermoney bundles third-party open-source components (all permissive:
 MIT / Apache-2.0 / BSD / ISC / CC0, plus MPL-2.0 for `webpki-roots`), none of
 which impose a copyleft obligation on this source. Full attributions and license
 texts are in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+
+## Disclaimer
+
+computermoney is free software provided **"as is", without warranty of any
+kind**, as stated in the [LICENSE](LICENSE). It is a self-custodial tool: you
+alone hold your keys and are solely responsible for your funds. Bugs, key loss,
+or on-chain mistakes can cause irreversible loss of money, and the authors and
+copyright holder accept no liability for any such loss.
+
+You are responsible for how you use this software and for complying with all
+laws and regulations that apply to you, including tax, financial, sanctions,
+and anti-money-laundering rules in your jurisdiction. The software is a neutral
+tool; the authors and copyright holder do not control, endorse, or take
+responsibility for any transaction made with it, and provide no financial,
+legal, or tax advice. Nothing here is an offer of a money-transmission or
+custody service.
