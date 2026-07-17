@@ -71,15 +71,45 @@ pub enum Entry {
     /// the original Sent/Received entry stays; the effective status is
     /// the latest update for that txid.
     StatusUpdate { seq: u64, txid: String, status: Status },
+    /// A Silent Payments output paying us was found by scanning the chain.
+    /// Keyed by the outpoint `(txid, vout)` — an SP payment has no issued
+    /// receive index; it lands on a one-time address only we can detect.
+    /// `tweak` is the hex ECDH tweak `t_k`, persisted so the spend key
+    /// `d = b_spend + t_k` is recoverable from seed + ledger alone. Shares
+    /// the pending/soft/final ladder with `Received`: reconcile advances it
+    /// via `StatusUpdate` because it is txid-keyed like every other payment.
+    SpReceived { seq: u64, txid: String, vout: u32, sats: u64, tweak: String, status: Status },
+    /// An SP outpoint we hold was spent. Append-only and set-semantic: the
+    /// spender books this when it builds the spend, and the scanner books it
+    /// again when it later observes the spend on-chain — duplicates for the
+    /// same outpoint are harmless, the folds treat SpSpent as a set.
+    SpSpent { seq: u64, txid: String, vout: u32 },
 }
 
 /// One issued receive index and its collection state: awaiting payment
 /// (`txid: None`) or paid (the observed tx, its sats). Live confirmation
 /// counts are the chain's to answer (`cm_confs`), not the ledger's.
+///
+/// `sp` distinguishes a Silent Payments receipt from a descriptor row. When
+/// `sp` is true, this receipt has no issued receive address: `index` holds the
+/// output's `vout`, not a receive index, so a renderer must NOT feed it to
+/// `wallet.address(index)` — show `txid:vout` instead.
 pub struct Collection {
     pub index: u32,
     pub txid: Option<String>,
     pub sats: u64,
+    pub sp: bool,
+}
+
+/// An unspent Silent Payments output we can spend. `tweak` is the hex ECDH
+/// tweak `t_k`; the spend key is `d = b_spend + t_k` (mod n). Only final
+/// (fully confirmed) unspent outputs are returned, so `sum(sats)` equals
+/// `sp_balance()`.
+pub struct SpUtxo {
+    pub txid: String,
+    pub vout: u32,
+    pub sats: u64,
+    pub tweak: String,
 }
 
 /// Wall-clock unix seconds. Used to stamp Sent entries; 0 if the clock is
@@ -97,7 +127,9 @@ impl Entry {
             Entry::AddressIssued { seq, .. }
             | Entry::Sent { seq, .. }
             | Entry::Received { seq, .. }
-            | Entry::StatusUpdate { seq, .. } => *seq,
+            | Entry::StatusUpdate { seq, .. }
+            | Entry::SpReceived { seq, .. }
+            | Entry::SpSpent { seq, .. } => *seq,
         }
     }
 }
@@ -232,7 +264,18 @@ impl Ledger {
     pub fn has_txid(&self, txid: &str) -> bool {
         self.entries.iter().any(|e| {
             matches!(e,
-                Entry::Sent { txid: t, .. } | Entry::Received { txid: t, .. } if t == txid)
+                Entry::Sent { txid: t, .. }
+                | Entry::Received { txid: t, .. }
+                | Entry::SpReceived { txid: t, .. } if t == txid)
+        })
+    }
+
+    /// Whether a specific SP outpoint `(txid, vout)` is already booked. The
+    /// scanner calls this to skip outputs it has recorded on a previous pass —
+    /// SP receipts are outpoint-keyed, so `has_txid` (txid-only) is too coarse.
+    pub fn has_sp_output(&self, txid: &str, vout: u32) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(e, Entry::SpReceived { txid: t, vout: v, .. } if t == txid && *v == vout)
         })
     }
 
@@ -240,7 +283,8 @@ impl Ledger {
     /// ledger stores a status, not a live count; a caller that needs the count
     /// refreshes via `chain`.
     pub fn collections(&self) -> Vec<Collection> {
-        self.entries
+        let mut rows: Vec<Collection> = self
+            .entries
             .iter()
             .filter_map(|e| match e {
                 Entry::AddressIssued { index, .. } => {
@@ -252,14 +296,21 @@ impl Ledger {
                     });
                     Some(match recv {
                         Some((txid, sats)) => {
-                            Collection { index: *index, txid: Some(txid), sats }
+                            Collection { index: *index, txid: Some(txid), sats, sp: false }
                         }
-                        None => Collection { index: *index, txid: None, sats: 0 },
+                        None => Collection { index: *index, txid: None, sats: 0, sp: false },
                     })
                 }
                 _ => None,
             })
-            .collect()
+            .collect();
+        // SP receipts have no issued index; each is its own row keyed by vout.
+        for e in &self.entries {
+            if let Entry::SpReceived { txid, vout, sats, .. } = e {
+                rows.push(Collection { index: *vout, txid: Some(txid.clone()), sats: *sats, sp: true });
+            }
+        }
+        rows
     }
 
     /// Record a chain-detected deposit as a Pending Received — but only if this
@@ -283,6 +334,128 @@ impl Ledger {
         Ok(true)
     }
 
+    /// Record a scanned Silent Payments output as a Pending SpReceived — but
+    /// only if this outpoint is not already booked. `tweak` is the hex ECDH
+    /// tweak. Returns whether a new entry was appended. Mirrors
+    /// `record_received`: dedup, then a Pending entry the reconcile loop
+    /// advances to Final. The scanner calls this for every fresh match.
+    pub fn record_sp_received(
+        &mut self,
+        txid: &str,
+        vout: u32,
+        sats: u64,
+        tweak: &str,
+    ) -> std::io::Result<bool> {
+        if self.has_sp_output(txid, vout) {
+            return Ok(false);
+        }
+        let seq = self.next_seq();
+        self.append(Entry::SpReceived {
+            seq,
+            txid: txid.to_string(),
+            vout,
+            sats,
+            tweak: tweak.to_string(),
+            status: Status::Pending,
+        })?;
+        Ok(true)
+    }
+
+    /// Mark an SP outpoint spent. Idempotent: a second call for the same
+    /// outpoint is a no-op (returns false) so repeated scans and the spender's
+    /// own booking do not grow the log. The fold is set-semantic regardless,
+    /// so a duplicate that does slip through (e.g. a race) is still harmless.
+    pub fn record_sp_spent(&mut self, txid: &str, vout: u32) -> std::io::Result<bool> {
+        if self.is_sp_spent(txid, vout) {
+            return Ok(false);
+        }
+        let seq = self.next_seq();
+        self.append(Entry::SpSpent { seq, txid: txid.to_string(), vout })?;
+        Ok(true)
+    }
+
+    /// The set of SP outpoints marked spent.
+    fn sp_spent_set(&self) -> std::collections::HashSet<(String, u32)> {
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::SpSpent { txid, vout, .. } => Some((txid.clone(), *vout)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn is_sp_spent(&self, txid: &str, vout: u32) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(e, Entry::SpSpent { txid: t, vout: v, .. } if t == txid && *v == vout)
+        })
+    }
+
+    /// Spendable Silent Payments balance: final SpReceived outputs whose
+    /// outpoint has not been spent. Kept separate from `balance()` (which is
+    /// the descriptor/Received fold) — `cm_balance` sums the two, so SP funds
+    /// are never double-counted against on-chain descriptor state.
+    pub fn sp_balance(&self) -> u64 {
+        let spent = self.sp_spent_set();
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::SpReceived { txid, vout, sats, .. }
+                    if self.latest_status(txid) == Some(Status::Final)
+                        && !spent.contains(&(txid.clone(), *vout)) =>
+                {
+                    Some(*sats)
+                }
+                _ => None,
+            })
+            .sum()
+    }
+
+    /// Silent-payment income that has been scanned and booked but is not yet
+    /// final (0–2 confirmations), and therefore not yet spendable. Reported as
+    /// an informational line by `cm_balance` so a fresh payment is visible the
+    /// instant it is scanned, before it crosses the 3-confirmation threshold
+    /// that moves it into `sp_balance()`. Spent outputs are excluded.
+    pub fn sp_incoming(&self) -> u64 {
+        let spent = self.sp_spent_set();
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::SpReceived { txid, vout, sats, .. }
+                    if self.latest_status(txid) != Some(Status::Final)
+                        && !spent.contains(&(txid.clone(), *vout)) =>
+                {
+                    Some(*sats)
+                }
+                _ => None,
+            })
+            .sum()
+    }
+
+    /// Unspent, fully-confirmed SP outputs with their tweaks — the spend
+    /// candidates. `sum(sats)` equals `sp_balance()`. The spender pins these as
+    /// foreign UTXOs and key-path-signs each with `d = b_spend + tweak`.
+    pub fn sp_utxos(&self) -> Vec<SpUtxo> {
+        let spent = self.sp_spent_set();
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::SpReceived { txid, vout, sats, tweak, .. }
+                    if self.latest_status(txid) == Some(Status::Final)
+                        && !spent.contains(&(txid.clone(), *vout)) =>
+                {
+                    Some(SpUtxo {
+                        txid: txid.clone(),
+                        vout: *vout,
+                        sats: *sats,
+                        tweak: tweak.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Effective (latest) status for a txid, folding in any StatusUpdate.
     pub fn latest_status(&self, txid: &str) -> Option<Status> {
         let mut s = None;
@@ -290,6 +463,7 @@ impl Ledger {
             match e {
                 Entry::Sent { txid: t, status, .. }
                 | Entry::Received { txid: t, status, .. }
+                | Entry::SpReceived { txid: t, status, .. }
                 | Entry::StatusUpdate { txid: t, status, .. }
                     if t == txid =>
                 {
@@ -333,7 +507,9 @@ impl Ledger {
         let mut out = Vec::new();
         for e in &self.entries {
             let txid = match e {
-                Entry::Sent { txid, .. } | Entry::Received { txid, .. } => txid,
+                Entry::Sent { txid, .. }
+                | Entry::Received { txid, .. }
+                | Entry::SpReceived { txid, .. } => txid,
                 _ => continue,
             };
             // Final and Failed are both terminal — off the work queue.
@@ -787,6 +963,162 @@ mod tests {
             Ledger::open_with_identity(&path, b.signing_keypair().unwrap()).is_err(),
             "another agent's key must not verify our ledger"
         );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn sp_entries_roundtrip_on_disk() {
+        let path = temp_path("sp_roundtrip");
+        let tw = "ab".repeat(32); // 64-hex = 32 bytes, the tweak's real width
+        {
+            let mut l = Ledger::open(&path).unwrap();
+            l.append(Entry::SpReceived {
+                seq: 0,
+                txid: "sp0".into(),
+                vout: 1,
+                sats: 5_000,
+                tweak: tw.clone(),
+                status: Status::Pending,
+            })
+            .unwrap();
+            l.append(Entry::SpSpent { seq: 1, txid: "sp0".into(), vout: 1 }).unwrap();
+        }
+        // A fresh daemon recovers both variants byte-for-byte.
+        let l2 = Ledger::open(&path).unwrap();
+        assert_eq!(l2.entries().len(), 2);
+        assert_eq!(l2.next_seq(), 2);
+        match &l2.entries()[0] {
+            Entry::SpReceived { txid, vout, sats, tweak, status, .. } => {
+                assert_eq!((txid.as_str(), *vout, *sats), ("sp0", 1, 5_000));
+                assert_eq!(tweak, &tw);
+                assert_eq!(*status, Status::Pending);
+            }
+            other => panic!("expected SpReceived, got {other:?}"),
+        }
+        assert!(matches!(l2.entries()[1], Entry::SpSpent { vout: 1, .. }));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn sp_balance_counts_final_unspent_only() {
+        let path = temp_path("sp_balance");
+        let tw = "cd".repeat(32);
+        let mut l = Ledger::open(&path).unwrap();
+        // final + unspent -> counts
+        l.record_sp_received("a", 0, 10_000, &tw).unwrap();
+        l.update_status("a", Status::Final).unwrap();
+        // final but spent -> excluded
+        l.record_sp_received("b", 0, 7_000, &tw).unwrap();
+        l.update_status("b", Status::Final).unwrap();
+        l.record_sp_spent("b", 0).unwrap();
+        // pending -> excluded from balance, but on the work queue
+        l.record_sp_received("c", 0, 3_000, &tw).unwrap();
+
+        assert_eq!(l.sp_balance(), 10_000);
+        // sp_utxos is exactly the spendable set: sum == sp_balance, tweak carried.
+        let utxos = l.sp_utxos();
+        assert_eq!(utxos.len(), 1);
+        assert_eq!(utxos[0].txid, "a");
+        assert_eq!(utxos[0].sats, 10_000);
+        assert_eq!(utxos[0].tweak, tw);
+        assert_eq!(utxos.iter().map(|u| u.sats).sum::<u64>(), l.sp_balance());
+        assert!(l.pending().contains(&"c".to_string()), "pending SP income is on the queue");
+
+        // The whole SP view survives a restart.
+        let l2 = Ledger::open(&path).unwrap();
+        assert_eq!(l2.sp_balance(), 10_000);
+        assert_eq!(l2.sp_utxos().len(), 1);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn duplicate_spspent_is_harmless_and_deduped() {
+        let path = temp_path("sp_dup");
+        let tw = "ef".repeat(32);
+        let mut l = Ledger::open(&path).unwrap();
+        l.record_sp_received("x", 2, 8_000, &tw).unwrap();
+        l.update_status("x", Status::Final).unwrap();
+        assert_eq!(l.sp_balance(), 8_000);
+
+        // record_sp_spent is idempotent: the spender books it, the scanner's
+        // later observation is a no-op.
+        assert!(l.record_sp_spent("x", 2).unwrap(), "first mark appends");
+        assert!(!l.record_sp_spent("x", 2).unwrap(), "second mark is a no-op");
+
+        // Even a raw duplicate that bypasses the dedup (a true race) is harmless:
+        // the fold is set-semantic, so the balance is 0, never negative.
+        let seq = l.next_seq();
+        l.append(Entry::SpSpent { seq, txid: "x".into(), vout: 2 }).unwrap();
+        assert_eq!(l.sp_balance(), 0);
+        assert!(l.sp_utxos().is_empty());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn sp_received_follows_the_status_ladder() {
+        let path = temp_path("sp_ladder");
+        let tw = "12".repeat(32);
+        let mut l = Ledger::open(&path).unwrap();
+        assert!(l.record_sp_received("t", 0, 6_000, &tw).unwrap());
+        // Outpoint dedup: the same (txid, vout) is refused on a re-scan.
+        assert!(!l.record_sp_received("t", 0, 6_000, &tw).unwrap());
+
+        // Pending: not spendable, but on the reconcile work queue.
+        assert_eq!(l.sp_balance(), 0);
+        assert_eq!(l.pending(), vec!["t".to_string()]);
+
+        // reconcile advances SP income through the same update_status mechanism.
+        l.update_status("t", Status::Soft).unwrap();
+        assert_eq!(l.sp_balance(), 0, "soft is not final");
+        l.update_status("t", Status::Final).unwrap();
+        assert_eq!(l.sp_balance(), 6_000);
+        assert!(l.pending().is_empty(), "final leaves the queue");
+
+        assert!(l.has_txid("t"));
+        assert!(l.has_sp_output("t", 0));
+        assert!(!l.has_sp_output("t", 1), "a different vout is a different outpoint");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn collections_include_sp_rows() {
+        let path = temp_path("sp_collections");
+        let tw = "34".repeat(32);
+        let mut l = Ledger::open(&path).unwrap();
+        l.append(Entry::AddressIssued { seq: 0, index: 0 }).unwrap();
+        l.record_sp_received("spx", 3, 9_000, &tw).unwrap();
+
+        let cols = l.collections();
+        let sp_rows: Vec<_> = cols.iter().filter(|c| c.sp).collect();
+        assert_eq!(sp_rows.len(), 1);
+        assert_eq!(sp_rows[0].index, 3, "an SP row carries the vout in `index`");
+        assert_eq!(sp_rows[0].txid.as_deref(), Some("spx"));
+        assert_eq!(sp_rows[0].sats, 9_000);
+
+        let desc_rows: Vec<_> = cols.iter().filter(|c| !c.sp).collect();
+        assert_eq!(desc_rows.len(), 1);
+        assert_eq!(desc_rows[0].index, 0);
+        assert!(!desc_rows[0].sp);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn signed_sp_entries_verify_on_reopen() {
+        use crate::wallet::Wallet;
+        let (w, _) = Wallet::generate().unwrap();
+        let kp = w.signing_keypair().unwrap();
+        let path = temp_path("sp_signed");
+        let tw = "56".repeat(32);
+        {
+            let mut l = Ledger::open_with_identity(&path, kp).unwrap();
+            l.record_sp_received("s", 0, 4_000, &tw).unwrap();
+            l.update_status("s", Status::Final).unwrap();
+            l.record_sp_spent("s", 0).unwrap();
+        }
+        // Signing wraps SP entries like any other; every line re-verifies.
+        let l2 = Ledger::open_with_identity(&path, kp).unwrap();
+        assert_eq!(l2.entries().len(), 3);
+        assert_eq!(l2.sp_balance(), 0, "final then spent nets to zero");
         std::fs::remove_file(&path).unwrap();
     }
 }

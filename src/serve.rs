@@ -72,10 +72,19 @@ pub fn run(
     eprintln!("cm serve: listening on {bind}");
     eprintln!("  ledger:  {}", ledger_path.display());
     eprintln!("  balance: {} sats final", led.balance());
+    eprintln!(
+        "  card key: {}  (share this — buyers pay you here)",
+        discover::card_pubkey_hex(&*wallet.wg_secret_bytes()?)
+    );
     if eps.is_empty() {
-        eprintln!("  endpoints: none — card key still resolves ({}), dial-out only", wallet.id_hex()?);
+        eprintln!("  endpoints: none — dial-out only (the card key above still resolves)");
     } else {
         eprintln!("  endpoints: {}", eps.join(", "));
+        eprintln!(
+            "  direct link: {}@{}  (a peer holding this link dials you without the DHT)",
+            wallet.id_hex()?,
+            eps[0]
+        );
     }
 
     let mut last_publish: Option<Instant> = None;
@@ -89,7 +98,7 @@ pub fn run(
             last_publish = Some(now);
         }
         if due(last_watch, WATCH_INTERVAL, now) {
-            chain_watch(&mut led, wallet);
+            chain_watch(&mut led, wallet, ledger_path);
             last_watch = Some(now);
         }
 
@@ -133,12 +142,13 @@ pub fn run(
 /// failure is a WARN — we keep serving. With no endpoints we still publish
 /// `{wg, at}`, so the card key resolves even though nobody can dial in.
 fn republish(wallet: &Wallet, eps: &[String]) -> Result<(), Box<dyn Error>> {
-    let card = Card { wg: wallet.id_hex()?, ep: eps.to_vec(), at: ledger::now_unix() };
+    let card = Card { wg: wallet.id_hex()?, ep: eps.to_vec(), sp: Some(wallet.sp_code()?), at: ledger::now_unix() };
+    let card_key = discover::card_pubkey_hex(&*wallet.wg_secret_bytes()?);
     match discover::publish(&*wallet.wg_secret_bytes()?, &card) {
         Ok(()) if eps.is_empty() => {
-            eprintln!("[serve] published card {} (no endpoint — key resolves, dial-out only)", card.wg)
+            eprintln!("[serve] published card {card_key} (no endpoint — key resolves, dial-out only)")
         }
-        Ok(()) => eprintln!("[serve] published card {} @ {}", card.wg, eps.join(", ")),
+        Ok(()) => eprintln!("[serve] published card {card_key} @ {}", eps.join(", ")),
         Err(e) => eprintln!("[serve] WARN DHT publish failed ({e}); still serving"),
     }
     Ok(())
@@ -148,7 +158,7 @@ fn republish(wallet: &Wallet, eps: &[String]) -> Result<(), Box<dyn Error>> {
 /// then poll the chain for deposits to every still-unpaid issued address and
 /// book any we have not already recorded. esplora errors are a WARN and retried
 /// next tick — the loop must never die on a transient network fault.
-fn chain_watch(led: &mut Ledger, wallet: &Wallet) {
+fn chain_watch(led: &mut Ledger, wallet: &Wallet, ledger_path: &Path) {
     match ledger::reconcile(led) {
         Ok(n) if n > 0 => {
             eprintln!("[serve] reconcile: {n} status update(s), balance {} sats final", led.balance())
@@ -182,6 +192,40 @@ fn chain_watch(led: &mut Ledger, wallet: &Wallet) {
             Err(e) => eprintln!("[serve] WARN deposits_to(index {idx}): {e}"),
         }
     }
+    // Silent-payment income has no address to poll for — the payer derived a
+    // one-time output from our published sp code. Scan the chain for it so a
+    // live seller books SP income too. Use a FRESH ledger for the scan (not this
+    // loop's long-lived `led`): another writer in the same process (a
+    // `cm_collections` call) may have booked income since we opened `led`, and a
+    // stale in-memory view would re-book duplicates. `scan_to_tip` also takes the
+    // process scan lock, so the two scans never interleave. Best-effort: any
+    // error is a WARN.
+    match scan_fresh(ledger_path, wallet) {
+        Ok((r, sp_balance)) if !r.found.is_empty() => {
+            for f in &r.found {
+                eprintln!("[serve] silent payment: {} sat at {}:{}", f.sats, f.txid, f.vout);
+            }
+            eprintln!(
+                "[serve] scan: {} new, {} sats silent-payment income",
+                r.found.len(),
+                sp_balance
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[serve] WARN silent-payment scan: {e}"),
+    }
+}
+
+/// Scan for silent-payment income against a freshly opened ledger, returning the
+/// pass report and the resulting SP balance. Opening fresh means the scan's
+/// dedup sees every append made by other writers on this file.
+fn scan_fresh(
+    ledger_path: &Path,
+    wallet: &Wallet,
+) -> Result<(crate::scan::ScanReport, u64), Box<dyn Error>> {
+    let mut led = Ledger::open_with_identity(ledger_path, wallet.signing_keypair()?)?;
+    let report = crate::scan::scan_to_tip(wallet, &mut led)?;
+    Ok((report, led.sp_balance()))
 }
 
 #[cfg(test)]

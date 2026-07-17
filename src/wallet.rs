@@ -97,6 +97,35 @@ impl Wallet {
         Ok(self.signing_keypair()?.x_only_public_key().0)
     }
 
+    /// BIP-352 Silent Payments scan key (m/352'/{coin}'/0'/1'/0). Used to
+    /// detect incoming silent payments; hot on a scanning node, unlike the
+    /// spend key. A dedicated `352'` account keeps SP keys recoverable by any
+    /// standard wallet and separate from the BIP-86 payment branches.
+    pub fn sp_scan_keypair(&self) -> Result<Keypair, Error> {
+        let secp = Secp256k1::new();
+        let path = DerivationPath::from_str(&format!("m/352'/{}'/0'/1'/0", self.coin_type()))?;
+        let child = self.root.derive_priv(&secp, &path)?;
+        Ok(child.to_keypair(&secp))
+    }
+
+    /// BIP-352 Silent Payments spend key (m/352'/{coin}'/0'/0'/0). Combined
+    /// with a per-payment tweak it produces the key that spends a received
+    /// silent payment; can stay cold while the scan key watches the chain.
+    pub fn sp_spend_keypair(&self) -> Result<Keypair, Error> {
+        let secp = Secp256k1::new();
+        let path = DerivationPath::from_str(&format!("m/352'/{}'/0'/0'/0", self.coin_type()))?;
+        let child = self.root.derive_priv(&secp, &path)?;
+        Ok(child.to_keypair(&secp))
+    }
+
+    /// This agent's silent-payment code (`sp1…`/`tsp1…`): the static handle a
+    /// payer uses to pay us while we are offline, and no address is reused.
+    pub fn sp_code(&self) -> Result<String, Error> {
+        let scan = self.sp_scan_keypair()?.public_key();
+        let spend = self.sp_spend_keypair()?.public_key();
+        Ok(crate::sp::encode(&scan, &spend, self.network))
+    }
+
     /// This agent's identity: the WireGuard public key (branch 3) as 64
     /// lowercase hex chars. It is what `cm id` prints, what a peer pays to,
     /// and (first 8 chars) the name of the wallet's state directory.
@@ -226,5 +255,21 @@ mod tests {
         let (w1, phrase) = Wallet::generate().unwrap();
         let w2 = Wallet::from_mnemonic(&phrase).unwrap();
         assert_eq!(w1.address(0).unwrap(), w2.address(0).unwrap());
+    }
+
+    #[test]
+    fn sp_code_decodes_to_our_keys_and_is_network_scoped() {
+        let s = Wallet::from_mnemonic_on(Network::Signet, VECTOR_MNEMONIC).unwrap();
+        let code = s.sp_code().unwrap();
+        assert!(code.starts_with("tsp1q"), "signet sp code should be tsp1q…, got {code}");
+        let (scan, spend, net) = crate::sp::decode(&code).unwrap();
+        assert_eq!(net, Network::Signet);
+        assert_eq!(scan, s.sp_scan_keypair().unwrap().public_key());
+        assert_eq!(spend, s.sp_spend_keypair().unwrap().public_key());
+        // Mainnet uses the sp hrp and a different coin type, so a distinct code.
+        let m = Wallet::from_mnemonic_on(Network::Bitcoin, VECTOR_MNEMONIC).unwrap();
+        let mcode = m.sp_code().unwrap();
+        assert!(mcode.starts_with("sp1q"));
+        assert_ne!(code, mcode);
     }
 }

@@ -3,9 +3,11 @@
 > Money that computers use. **Bitcoin-native autonomous payments between AI agents.**
 
 Two terminal-resident agents (Claude Code / Codex as the engine) hold cryptographic
-identities and pay each other in Bitcoin. They coordinate over a WireGuard tunnel and
-settle on Bitcoin L1 (Taproot) — one chain transaction per payment, no channels. The
-trust model is WireGuard's: **the key is the identity, not the IP.**
+identities and pay each other in Bitcoin, settling on Bitcoin L1 (Taproot): one chain
+transaction per payment, no channels. A payee publishes one static **silent-payment code**
+(BIP-352) and can then receive while fully offline; a WireGuard tunnel remains as the
+rail for live interaction. The trust model is unchanged: **the key is the identity,
+not the IP.**
 
 ## Install
 
@@ -57,8 +59,10 @@ deterministic.
        ├── m/86'/c'/0'/0/n  →  Taproot receive address    (secp256k1) │
        ├── m/86'/c'/0'/1/n  →  Taproot change address     (secp256k1) │
        ├── m/86'/c'/0'/2/0  →  Schnorr ledger-signing key (secp256k1) │
-       └── m/86'/c'/0'/3/0  →  network identity: WireGuard (X25519)  ┘
-                               + DHT card key (ed25519), one seed
+       ├── m/86'/c'/0'/3/0  →  network identity: WireGuard (X25519)   │
+       │                       + DHT card key (ed25519), one seed     │
+       ├── m/352'/c'/0'/1'/0 → silent-payment scan key    (secp256k1) │
+       └── m/352'/c'/0'/0'/0 → silent-payment spend key   (secp256k1) ┘
 ```
 
 A Bitcoin address is *derived*, never *issued*: it is just an encoding of a public key,
@@ -127,9 +131,49 @@ predictable signing nonces; and the Linux kernel deliberately refuses to *trust 
 alone*, mixing it with other sources precisely because one hardware RNG is a backdoorable
 single point. `cm` inherits that lesson: the cipher is settled — guard the entropy.
 
-## How a payment works: WireGuard ↔ `cm` ↔ Bitcoin L1
+## Paying an offline peer: Silent Payments (BIP-352)
 
-Two layers, deliberately never mixed: **WireGuard moves *messages*, Bitcoin L1 moves
+The primary rail. The payee's **sp code** (`sp1…`/`tsp1…`) encodes two public keys and
+never changes, so it can sit in a chat message, a document, a DHT card, or an HTTP 402
+response forever. Paying it needs nothing from the payee:
+
+1. **The payer derives a one-time Taproot address itself**, from its own transaction
+   inputs plus the code (ECDH against the payee's scan key). On-chain the result is an
+   ordinary P2TR payment; no third party can link it to the code.
+2. **The payee scans later.** Whenever it comes back online, `cm_collections` (or a plain
+   `cm_balance`, which scans as part of reporting) walks the chain from its checkpoint,
+   recognizes its own outputs with the scan key, and books each one in the signed ledger
+   together with its key tweak.
+3. **The income spends like any other funds.** The spend key for a received output is
+   `spend_key + tweak`; every send path (`cm_pay`, `cm_send`, `cm_fetch`) mixes such
+   outputs with ordinary wallet funds in one transaction, so money earned by silent
+   payment pays an sp code or an HTTP-402 endpoint just as it pays a plain address.
+
+The payee never ran a server, never handed out an address, and never reused one.
+Address reuse is what silent payments were designed to kill: one public code, a fresh
+address per payment, and only the holder of the scan key can even see the payments.
+
+## Selling over HTTP 402
+
+`cm_paywall` turns a price and a body into a URL. Any GET without payment gets:
+
+```
+HTTP/1.1 402 Payment Required
+{"cm402":1,"sats":500,"pay_to":"tsp1…","network":"signet"}
+```
+
+The buyer's `cm_fetch` reads the terms, pays the sp code on-chain within its cap, and
+retries with `X-Payment: <txid>`. The seller verifies by scanning that transaction with
+its own scan key (amount must cover the price, each txid redeemable once) and returns
+the content. The payment terms travel inside the protocol; no human hands keys around.
+This v1 proof is demo-grade by design: a bare txid, accepted at 0 confirmations. Signed
+quotes and payer proofs are specified for v2.
+
+## Interactive payments: WireGuard ↔ `cm` ↔ Bitcoin L1
+
+The reserve rail, for when both agents are online and want a live exchange (the payee
+issues a fresh address over the tunnel and acknowledges receipt). Two layers,
+deliberately never mixed: **WireGuard moves *messages*, Bitcoin L1 moves
 *money*, and `cm` is the bridge that turns one into the other.** WireGuard never sees a
 coin or touches a Bitcoin key, and the chain — not any peer's message — is the source of
 truth for whether money actually arrived.
@@ -169,20 +213,25 @@ the Bitcoin network* (required to actually settle).
    tx, **Schnorr-signs** it, and **broadcasts** it. Signing is offline; the broadcast must
    reach a Bitcoin node. *Path 2 — internet required.*
 4. **A notifies.** `Notify{txid, sats}` over the tunnel — a hint, not proof. *Path 1.*
-5. **B reconciles against the chain.** B trusts the chain, not the message: `reconcile`
-   queries confirmations; 3 confs = Final. Global consensus validates the tx — B's standard
-   BIP-86 address is honored by every node, Bitcoin Core included. *Internet required.*
+5. **B verifies on-chain, then reconciles.** The `Notify` is only a trigger: B queries the
+   chain for the deposit to the address it issued and books the **real** output value (never
+   the claimed one), then `reconcile` advances it by confirmations; 3 confs = Final. Global
+   consensus validates the tx — B's standard BIP-86 address is honored by every node, Bitcoin
+   Core included. *Internet required.*
 6. **Both record it** in their own signed append-only `ledger.jsonl`, inside each agent's
    identity directory (balance, work queue, crash recovery).
 
-**Two honest gaps.** (1) The *decision* to pay — the trigger for step 1 — lives outside
+**Where trust sits.** A `Notify` is never trusted: the receive side does **not** credit the
+amount the payer claims. It looks the transaction up on-chain against the address it issued
+and books the **real** output value the chain reports — or nothing, if the tx is not visible
+yet, in which case the seller daemon's chain-watch books it once it lands. So a hostile payer
+naming any confirmed txid, or inflating the amount, credits nothing: the chain is the sole
+source of receipt and the message is only a low-trust trigger.
+
+**One honest gap remains.** The *decision* to pay — the trigger for step 1 — lives outside
 `cm` today (a human, or an agent that execs `cm pay` / calls the `cm_pay` MCP tool); the
 seller's `cm serve` is an unattended daemon, so `cm` is the autonomous *hands*, not yet the
-*brain*. (2) Step 5 is incomplete: `reconcile` confirms the txid is buried but does **not**
-yet verify the transaction pays B's issued address for the claimed amount, so a lying
-`Notify` can record a phantom credit — the top correctness fix is to verify the on-chain
-output inside `reconcile`. (The seller daemon's chain-watch already books deposits straight
-from the chain, which is the honest signal; the `Notify` path is the shortcut being hardened.)
+*brain*.
 
 > **Wire-level detail:** [`docs/payment-flow.md`](docs/payment-flow.md) walks through the
 > exact function-by-function order inside `cm pay` and the seller daemon — the two stacked
@@ -199,6 +248,19 @@ from the chain, which is the honest signal; the `Notify` path is the shortcut be
   the exact same code path with worthless coins. Signet defaults to a 30-second-block
   endpoint, so 3-confirmation *Final* is ~90 s — this is what the demo uses.
 - **Planned — L2 Lightning.** Not built; under consideration only.
+
+## v1 boundaries (stated, not hidden)
+
+- **The scanner sees payments whose inputs are P2TR key-path or P2WPKH only.** cm's own
+  payments always qualify. An external wallet that mixes in other input types (P2PKH,
+  P2SH-P2WPKH) produces a payment the v1 scanner cannot recognize; a spec-complete
+  scan tier is the mainnet milestone.
+- **Silent-payment sends have a 330-sat minimum**, matching the receiver dust floor, so
+  nothing cm sends can arrive unseen.
+- **The paywall accepts a bare txid at 0 confirmations.** Fine for small per-call prices;
+  the v2 spec adds signed quotes, payer proofs, and confirmation floors.
+- **No reorg rescan.** A payment reorged out from under the scan checkpoint stays
+  Pending and is not rediscovered automatically.
 
 ## Platforms
 
@@ -225,12 +287,17 @@ The surface is the pipeline: **discover** (Mainline DHT) → **talk** (WireGuard
 the whole thing.
 
 ```
-cm setup                          create a wallet, then show identity, fund address, balance
-cm id                             print your card key — the one thing you share
+cm setup                          create a wallet, then show identity, sp code, fund address, balance
+cm id                             print your card key and static sp code — the handles you share
+cm publish [host:port ...]        sign + put your card (sp code, endpoints) to the DHT yourself
 cm serve [--bind a] [--ep a]...   run the seller daemon: publish, accept buyers, watch the chain
+cm pay <sp-code> <sats>           pay a silent-payment code on-chain (payee may be offline)
 cm pay <card-key> <sats>          discover -> talk -> settle, in one command
 cm pay <pubkey@host:port> <sats>  pay a known endpoint directly (no DHT)
-cm balance                        sync from the chain, print balance
+cm fetch <url> [--max-sats N]     GET a URL, auto-paying a cm HTTP 402 within the cap
+cm paywall <price> [--port N] [--body S]  sell one body over HTTP 402 (blocking foreground)
+cm balance                        sync from the chain, print on-chain + silent-payment balance
+cm confs <txid>                   confirmation count + status (pending/soft/final)
 cm mcp                            stdio MCP server for AI-agent clients (tools below)
 ```
 
@@ -261,6 +328,19 @@ created), or — with only one wallet — automatically. `policy.json` stays at 
 Run a seller and a buyer as two separate identities on one machine (`CM_HOME` gives each its
 own wallet store) and watch the whole pipeline — discover, talk, settle — move real signet
 coins. Everything is signet, so nothing here spends mainnet BTC.
+
+The offline flow needs no daemon at all:
+
+```sh
+export CM_NETWORK=signet
+CM_HOME=~/cm-seller cm setup                  # prints B's sp code; card goes to the DHT
+# B can now shut everything down.
+CM_HOME=~/cm-buyer  cm pay <B-sp-code> 1000   # or <B-card-key>: resolves the card, pays on-chain
+# Later, B returns and collects (the cm_collections MCP tool scans to tip and books it),
+# then spends the income like any other funds.
+```
+
+The interactive flow runs the resident daemon:
 
 ```sh
 # --- Seller (agent B): its own store, its own wallet, a resident daemon ---
@@ -293,11 +373,17 @@ flags, no key handling. It exposes exactly these tools and nothing else:
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `cm_pay` | `card_key` (64-hex), `sats` (integer ≥ 1) | the flagship verb: resolve the card on the DHT, tunnel to the peer, settle on-chain; returns the txid + explorer URL |
-| `cm_send` | `address` (string), `sats` (integer ≥ 1) | raw on-chain send to an address you already hold; policy-gated, Schnorr-signed, broadcast; returns the txid + explorer URL |
-| `cm_balance` | *(none)* | confirmed + pending balance on the active network |
+| `cm_setup` | *(none)* | create the wallet if absent and report network, card key, sp code, address, balance; safe to call anytime |
+| `cm_pay` | `peer` (sp code, 64-hex card key, or `wg-pubkey@host:port`), `sats` (integer ≥ 1) | the flagship verb: pay by sp code (on-chain, payee may be offline), by card key (DHT), or a direct link; returns the txid + explorer URL |
+| `cm_send` | `address` (string), `sats` (integer ≥ 1) | on-chain send to an address you hold, drawing on received silent-payment funds too; returns the txid + explorer URL |
+| `cm_fetch` | `url` (string), `max_sats` (integer, default 10000) | GET a URL and auto-pay a cm HTTP 402 within the cap; returns the body plus the sats paid + txid when a payment happened |
+| `cm_paywall` | `price_sats` (integer ≥ 1), `body` (string, optional), `port` (integer, default 8402) | sell one body over HTTP 402 for the session; returns the URL whose 402 carries your sp code |
+| `cm_balance` | *(none)* | confirmed + pending on-chain balance plus silent-payment income; scans the chain for offline SP income on every call and also shows income received but not yet spendable, so a plain balance check reflects money paid while you were away |
+| `cm_collections` | *(none)* | scan the chain and report every received payment as itemized rows, including offline silent-payment income |
 | `cm_confs` | `txid` (string) | a payment's confirmation count + status (pending/soft/final), and advances the ledger |
-| `cm_collections` | *(none)* | per issued receive index: address, awaiting/paid, txid, sats — how a seller agent knows a payment landed |
+| `cm_id` | *(none)* | print your card key and static sp code — the payee handles you share |
+| `cm_address` | *(none)* | the wallet's on-chain funding address (receive index 0) |
+| `cm_serve` | `bind` (optional), `ep` (optional) | run the interactive seller daemon in the background for the session; endpoint auto-detected |
 
 `cm_pay` and `cm_send` are the same ledger-first path `cm pay` settles through: the agent supplies
 only `{card_key/address, sats}` — **the seed and passphrase are never tool arguments.** The wallet
@@ -353,10 +439,14 @@ all diagnostics go to stderr, so the stream stays clean for the client.
 
 ## License
 
-Source-available under the **[PolyForm Shield License 1.0.0](LICENSE)** —
-Copyright 2026 Junhyuk Lee. Use it for anything, including building products on
-top of it; the one carve-out is that you may not use it to build a product that
-competes with computermoney. See [`LICENSE`](LICENSE) for the exact terms.
+**[MIT License](LICENSE)**, Copyright 2026 Junhyuk Lee. Permissive: use, modify,
+and redistribute it, including in commercial and closed-source products, as long as
+the copyright notice travels with it. See [`LICENSE`](LICENSE) for the exact terms.
+
+The name and logo are covered separately by the [trademark policy](TRADEMARK.md):
+the code is yours to build on, but "computermoney" as a product name is not.
+Contributions require a Developer Certificate of Origin sign-off (see
+[`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 computermoney bundles third-party open-source components (all permissive:
 MIT / Apache-2.0 / BSD / ISC / CC0, plus MPL-2.0 for `webpki-roots`), none of

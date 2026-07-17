@@ -44,6 +44,11 @@ pub struct Card {
     pub wg: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ep: Vec<String>,
+    /// The agent's silent-payment code (`sp1…`/`tsp1…`), when it publishes one.
+    /// Optional so v1 cards (WireGuard only) still parse. A payer who resolves
+    /// this card can pay the SP code while the agent is offline, no tunnel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sp: Option<String>,
     pub at: u64,
 }
 
@@ -151,6 +156,7 @@ mod tests {
         let card = Card {
             wg: "ab".repeat(32),
             ep: vec!["1.2.3.4:51820".into(), "[2001:db8::1]:51820".into()],
+            sp: Some("tsp1qq".to_string() + &"q".repeat(107)),
             at: 1_760_000_000,
         };
         let bytes = serde_json::to_vec(&card).unwrap();
@@ -161,12 +167,32 @@ mod tests {
     fn ep_less_card_round_trips() {
         // A dial-out-only buyer publishes no endpoint: `ep` is skipped on the
         // wire and defaults back to empty on read.
-        let card = Card { wg: "cd".repeat(32), ep: vec![], at: 42 };
+        let card = Card { wg: "cd".repeat(32), ep: vec![], sp: None, at: 42 };
         let bytes = serde_json::to_vec(&card).unwrap();
         assert!(!bytes.windows(2).any(|w| w == b"ep"), "empty ep is not serialized");
         let back: Card = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.wg, card.wg);
         assert!(back.ep.is_empty());
         assert_eq!(back.at, card.at);
+    }
+
+    #[test]
+    fn v1_card_without_sp_still_parses() {
+        // A card published before silent payments existed carries no `sp`; it
+        // must still deserialize (serde default) so old peers stay reachable.
+        let v1 = br#"{"wg":"abababababababababababababababababababababababababababababababab","at":7}"#;
+        let card: Card = serde_json::from_slice(v1).unwrap();
+        assert!(card.sp.is_none());
+        assert!(card.ep.is_empty());
+        assert_eq!(card.at, 7);
+    }
+
+    #[test]
+    fn v2_card_with_sp_round_trips() {
+        let card =
+            Card { wg: "ab".repeat(32), ep: vec![], sp: Some("tsp1qexample".into()), at: 9 };
+        let bytes = serde_json::to_vec(&card).unwrap();
+        let back: Card = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.sp.as_deref(), Some("tsp1qexample"));
     }
 }

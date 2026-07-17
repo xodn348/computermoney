@@ -9,7 +9,7 @@
 use std::error::Error;
 
 use crate::chain;
-use crate::ledger::{self, Entry, Ledger, Status};
+use crate::ledger::{self, Entry, Ledger};
 use crate::policy::{Policy, DAILY_WINDOW_SECS};
 use crate::protocol::{Message, Receiver};
 
@@ -21,16 +21,19 @@ pub(crate) trait Wire {
 }
 
 /// The receive side: answer AddrRequest with a fresh address, record each
-/// issuance and each notified payment in the signed ledger, reconcile
-/// against the chain. Runs until the peer goes away.
+/// issuance and each chain-verified receipt in the signed ledger (a Notify is
+/// only a hint — we book the real on-chain amount, never the claimed one),
+/// reconcile against the chain. Runs until the peer goes away.
 pub(crate) fn run_receiver<W: Wire>(
     wire: &mut W,
     rx: &mut Receiver,
     led: &mut Ledger,
 ) -> Result<(), Box<dyn Error>> {
-    // The index issued earlier in this session; a following Notify binds to
-    // it. The chain is still the real proof of receipt.
+    // The index and address issued earlier in this session; a following Notify
+    // triggers on-chain verification against that address. The chain is the only
+    // proof of receipt — the Notify itself is never trusted.
     let mut issued_index: Option<u32> = None;
+    let mut issued_address: Option<String> = None;
     while let Some(msg) = wire.recv()? {
         match msg {
             Message::AddrRequest { sats } => {
@@ -39,31 +42,51 @@ pub(crate) fn run_receiver<W: Wire>(
                 {
                     led.append(Entry::AddressIssued { seq: led.next_seq(), index })?;
                     issued_index = Some(index);
+                    issued_address = Some(address.clone());
                     eprintln!("[recv] issued index {index} for {sats} sats: {address}");
                     wire.send(&Message::AddrResponse { address, index })?;
                 }
             }
-            Message::Notify { txid, sats } => {
+            Message::Notify { txid, sats: claimed } => {
+                // A Notify is an UNTRUSTED hint: a hostile payer could name any
+                // confirmed txid and any amount. We never credit from the claim.
+                // Instead we verify on-chain that this txid actually pays the
+                // address we issued this session, and book the REAL amount the
+                // chain reports. If the tx is not visible yet (mempool/esplora
+                // lag) we record nothing — serve's periodic chain-watch books it
+                // once it lands. Either way we return now: UDP has no close, so
+                // reading on would block a full RECV_TIMEOUT and starve the next
+                // buyer.
                 let index = issued_index.unwrap_or(0);
-                led.append(Entry::Received {
-                    seq: led.next_seq(),
-                    txid: txid.clone(),
-                    sats,
-                    index,
-                    status: Status::Pending,
-                })?;
-                eprintln!("[recv] notify txid {txid} ({sats} sats); reconciling…");
-                let changed = ledger::reconcile(led).unwrap_or(0);
-                let confs = chain::confirmations(&txid).unwrap_or(0);
-                eprintln!(
-                    "[recv] {txid}: {confs} confs, {changed} update(s), balance {} sats final",
-                    led.balance()
-                );
-                // Notify is the payer's last word — the money is on-chain and
-                // recorded, so this session is done. UDP has no close, so if we
-                // kept reading we would block a full RECV_TIMEOUT waiting for a
-                // message that never comes, starving the next buyer. Return now
-                // and free the socket immediately.
+                match &issued_address {
+                    Some(addr) => match chain::deposits_to(addr) {
+                        Ok(deposits) => match deposits.iter().find(|d| d.txid == txid) {
+                            Some(d) => {
+                                let booked = led.record_received(&d.txid, d.sats, index)?;
+                                let _ = ledger::reconcile(led);
+                                if booked {
+                                    eprintln!(
+                                        "[recv] verified {txid} pays {} sat to our address (claimed {claimed}); balance {} sats final",
+                                        d.sats,
+                                        led.balance()
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "[recv] {txid} already recorded; balance {} sats final",
+                                        led.balance()
+                                    );
+                                }
+                            }
+                            None => eprintln!(
+                                "[recv] WARN notify {txid} does not pay our issued address (claimed {claimed} sat); ignoring — chain-watch will book it if it lands"
+                            ),
+                        },
+                        Err(e) => eprintln!("[recv] WARN verifying notify {txid}: {e}"),
+                    },
+                    None => eprintln!(
+                        "[recv] WARN notify {txid} with no address issued this session; ignoring"
+                    ),
+                }
                 return Ok(());
             }
             Message::Chat { text } => eprintln!("[recv] chat: {text}"),

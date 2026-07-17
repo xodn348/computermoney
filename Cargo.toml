@@ -9,7 +9,7 @@ license = "MIT"
 bitcoin = { version = "0.32", features = ["rand-std"] }
 bip39 = { version = "2.1", features = ["rand", "zeroize"] }
 bdk_wallet = "3.0.0"
-bdk_esplora = { version = "0.22.2", features = ["blocking"] }
+bdk_esplora = { version = "0.22.2", default-features = false, features = ["std", "blocking-https-rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 argon2 = "0.5.3"
@@ -18,6 +18,8 @@ rand = "0.8"
 zeroize = "1"
 boringtun = { version = "0.7.1", default-features = false }
 mainline = "7.0.0"
+bech32 = "0.11"
+minreq = { version = "2", features = ["https-rustls"] }
 
 [dev-dependencies]
 sha2 = "0.10" # examples/key-genesis.rs: show the BIP-39 checksum bits

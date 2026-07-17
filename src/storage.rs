@@ -167,7 +167,7 @@ fn pick_identity(
     }
     match ids {
         [one] => Ok(one.clone()),
-        [] => Err("no wallet: run `cm init` (or `cm setup`) first".into()),
+        [] => Err("no wallet: run `cm setup` first".into()),
         _ => Err(format!(
             "several identities live here ({}); set CM_ID=<prefix> to pick one",
             ids.join(", ")
@@ -307,7 +307,7 @@ pub fn load_wallet() -> Result<Wallet, Box<dyn Error>> {
     } else {
         let mn = dir.join("mnemonic");
         if !mn.exists() {
-            return Err(format!("identity {id} has no seed.enc or mnemonic file — recreate it with `cm init`").into());
+            return Err(format!("identity {id} has no seed.enc or mnemonic file — recreate it with `cm setup`").into());
         }
         // A bare key on disk is a test-network convenience, never a way to
         // hold real funds: on mainnet it is refused, not silently used.
