@@ -8,6 +8,8 @@ AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other extern
 
 An agent driving `cm` in plain language, end to end: no processor, no account, real bitcoin.
 
+_The two clips are recorded on a test network (signet), so the coins are worthless. On mainnet the same commands and the same flow move real bitcoin._
+
 **1. Pay a peer found on the DHT.** The agent reads B's card from the DHT and pays its static
 silent-payment code on Bitcoin L1. B can be offline.
 
@@ -73,10 +75,11 @@ curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.
 ```
 
 Builds and installs the `cm` binary (needs a [Rust toolchain](https://rustup.rs) and a C
-compiler) and, if Claude Code is detected, registers the `cm mcp` server. It starts you on a
-**signet demo wallet** so you can try everything with worthless coins; fund the printed address
-from the [faucet](https://faucet.mutinynet.com/). Move to real bitcoin in
-[Going to mainnet](#going-to-mainnet-real-bitcoin).
+compiler) and, if Claude Code is detected, registers the `cm mcp` server. `cm` runs on
+**Bitcoin mainnet by default**, which is the real product. So the first run is safe, the
+one-line installer opts the demo wallet down to **signet** (worthless coins) that you can fund
+from the [faucet](https://faucet.mutinynet.com/). When you want real bitcoin, set up
+[mainnet](#mainnet-real-bitcoin).
 
 ## Using it
 
@@ -121,11 +124,12 @@ Here is the exact sequence and the natural-language prompt that drives each step
 forward immediately with *"pay …"*). The payment terms travelled inside the protocol; no key,
 invoice, or account was handed around.
 
-## Going to mainnet (real bitcoin)
+## Mainnet (real bitcoin)
 
-The installer wallet is signet. For real money, register the MCP server with
-`CM_NETWORK=mainnet`, unlock a sealed seed with a passphrase, and **set a spend cap**: on
-mainnet `cm` refuses to broadcast without one.
+`cm` is a mainnet wallet by default; the one-line installer only opts down to signet so the
+first run is safe. For real money, register the MCP server with `CM_NETWORK=mainnet`, unlock a
+sealed seed with a passphrase, and **set the caps**: on mainnet `cm` refuses to broadcast
+without them.
 
 ```json
 "env": {
@@ -135,13 +139,14 @@ mainnet `cm` refuses to broadcast without one.
 }
 ```
 ```json
-// policy.json — a limit the agent cannot talk its way around
-{ "max_payment_sats": 50000, "daily_limit_sats": 200000 }
+// policy.json: limits the agent cannot talk its way around
+{ "max_payment_sats": 50000, "daily_limit_sats": 200000, "max_fee_sats": 5000 }
 ```
 
-The cap is **fail-closed**: an absent or empty policy on mainnet rejects the send before any
-signing, at the single chokepoint every send path funnels through. Signet and testnet stay
-permissive for experimentation.
+The guard is **fail-closed**: on mainnet a send is rejected before any signing unless the policy
+sets a spend cap (`max_payment_sats` or `daily_limit_sats`) and a fee cap (`max_fee_sats`). An
+absent or empty `policy.json` (`{}`) counts as uncapped and is refused, at the single chokepoint
+every send path funnels through. Signet and testnet stay permissive for experimentation.
 
 ## Commands
 

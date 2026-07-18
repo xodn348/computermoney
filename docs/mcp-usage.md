@@ -1,46 +1,73 @@
 ---
 title: MCP usage
-nav_order: 3
+nav_order: 5
 ---
+
+# MCP usage
 
 Drive the whole wallet in plain language. `cm mcp` runs the same `cm` binary as a
 [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an MCP
 client (Claude Code, Claude Desktop, your own agent) calls tools instead of you typing
-`cm`. The seed and passphrase are never tool arguments — the wallet unlocks once at startup
-and is held for the process lifetime.
+`cm`. The wallet unlocks once at startup (or lazily on the first call that can unlock it)
+and is held for the process lifetime. The seed and passphrase are never tool arguments.
+
+For the money path behind these tools (discover on the DHT, talk over WireGuard, settle on
+Bitcoin L1, or pay a Silent Payments code offline) see [Payment flow](payment-flow.md). For
+the module/function/CLI/env reference see [Reference](reference.md).
 
 ## The tools
 
-| Tool | Args | Role | What it does |
-|---|---|---|---|
-| `cm_pay` | `card_key` (64-hex), `sats` | buyer | **the flagship**: resolve the card on the DHT, tunnel over WireGuard, settle on L1. Returns txid + explorer URL. |
-| `cm_send` | `address`, `sats` | buyer | raw on-chain send to an address you already hold. Returns txid + explorer URL. |
-| `cm_balance` | — | either | confirmed + pending balance on the active network. |
-| `cm_confs` | `txid` | either | confirmation count + status (pending/soft/final), and advances the ledger. |
-| `cm_collections` | — | seller | per issued receive index: address, awaiting/paid, txid, sats. How the seller agent sees a payment arrive. |
+The server exposes 11 tools (registered in `src/mcp.rs:169-367`, allowlisted in
+`src/mcp.rs:376-389`). Tools that take no arguments have an explicit empty-object
+`inputSchema`. Every `sats` field is an integer with `minimum: 1`.
 
-## One thing MCP cannot do: start the seller
+| Tool | Params | What it does |
+|---|---|---|
+| `cm_setup` | none | Create this agent's wallet if it has none, then report network, card key, static sp code, funding address, and balance, and publish the card to the DHT (best effort). Call this first, once. On mainnet the seed is sealed, so `CM_PASSPHRASE` must be in the server's registration env. (`mcp.rs:173`) |
+| `cm_pay` | `peer` (string, required), `sats` (int ≥1, required) | Pay a peer `sats` satoshis. `peer` is any of: an `sp1`/`tsp1` Silent Payments code (on-chain, payee may be offline), a 64-hex card key (resolved on the DHT; on-chain if the card carries an sp code, else a WireGuard tunnel), or a `wg-pubkey@host:port` direct link (tunnel, no DHT). Draws on ordinary funds and received silent-payment income. Returns txid + explorer URL. (`mcp.rs:184`) |
+| `cm_send` | `address` (string, required), `sats` (int ≥1, required) | Raw on-chain send of `sats` to a Bitcoin `address` you already hold. Draws on ordinary funds and received silent-payment income. Returns txid + explorer URL. (`mcp.rs:210`) |
+| `cm_fetch` | `url` (string, required), `max_sats` (int ≥1, optional, default 10000) | GET `url`; a normal 200 is returned as-is, a cm HTTP 402 is auto-paid on-chain within `max_sats` and the URL is retried until the content comes back. Returns the body, plus sats paid and txid when a payment happened. (`mcp.rs:234`) |
+| `cm_paywall` | `price_sats` (int ≥1, required), `body` (string, optional, default placeholder), `port` (int ≥1, optional, default 8402) | Sell one `body` for `price_sats` over HTTP 402 for the rest of this session (background thread; one per session). Returns a URL whose unpaid GET yields a 402 carrying your sp code and price; a paid retry (header `X-Payment: <txid>`) yields the content. Listen IP is auto-detected. (`mcp.rs:259`) |
+| `cm_balance` | none | Report spendable balance on the active network: confirmed + pending on-chain plus received silent-payment income. Scans the chain for offline SP income as part of the call; income received but not yet spendable (fewer than 3 confirmations) is shown on its own `incoming` line. (`mcp.rs:288`) |
+| `cm_collections` | none | Scan the chain for money paid to you and report every received payment (ordinary deposits and offline silent-payment income) as JSON `{ scan, collections[] }`. Books newly found silent payments before reporting. This is how a seller agent sees a payment arrive. (`mcp.rs:301`) |
+| `cm_confs` | `txid` (string, required) | Report `txid`'s confirmation count and status (pending/soft/final/failed) and advance the ledger's recorded status. (`mcp.rs:310`) |
+| `cm_id` | none | Print this agent's card key (the 64-hex identity a peer resolves on the DHT) and its static sp code. Both are payee handles. (`mcp.rs:327`) |
+| `cm_address` | none | Print the wallet's on-chain funding address (receive index 0), for topping up from an exchange or faucet. (`mcp.rs:335`) |
+| `cm_serve` | `bind` (string, optional, default `0.0.0.0:51820`), `ep` (string, optional, auto-detected) | Start the seller daemon in the background for the rest of this session (one per session): publish the card on the DHT, accept WireGuard tunnels, and watch the chain. Only needed for live peer sessions; for plain get-paid, `cm_setup`'s sp code is enough and you can stay offline. Returns the card key, endpoint, and a direct link. (`mcp.rs:342`) |
 
-The seller's body is `cm serve` — a **resident daemon**, not an MCP tool. An MCP server is
-request/response; a daemon would block it. So the split is deliberate:
+Notes on the two long-running tools:
 
-- **buyer = pure MCP** — the agent calls `cm_pay` / `cm_send`; no CLI.
-- **seller = `cm serve` daemon (one CLI line) + MCP for monitoring** — the daemon accepts
-  tunnels and books deposits from the chain; the seller agent watches with `cm_collections`.
+- `cm_serve` and `cm_paywall` each spawn a background thread that lives until the MCP
+  process exits with its client session. A second call to either returns "already
+  serving" / "already running" instead of racing a duplicate listener (`mcp.rs:38-42`).
+- `cm_setup`, `cm_serve`, and `cm_paywall` run before the shared wallet unlock, so they
+  work even when the session started with no wallet yet (`mcp.rs:395-402`).
 
-You cannot run the full two-agent flow with *zero* CLI: the seller daemon is the one process
-that must be started from a shell. Everything a person *asks* still goes through MCP.
+## Plain-language examples
 
-## Setup (signet demo wallet)
+| You say | The agent calls |
+|---|---|
+| "set up my wallet / what's my card key and sp code?" | `cm_setup` |
+| "what's my balance?" | `cm_balance` |
+| "pay 5000 sats to `sp1q…` (or a 64-hex card key)" | `cm_pay(peer, 5000)` |
+| "send 1000 sats to `<address>`" | `cm_send(address, 1000)` |
+| "buy the data at `<url>`, up to 2000 sats" | `cm_fetch(url, 2000)` |
+| "sell this text for 500 sats" | `cm_paywall(500, body)` |
+| "did anyone pay me?" | `cm_collections` |
+| "how many confirmations on `<txid>`?" | `cm_confs(txid)` |
+| "start accepting live peer sessions" | `cm_serve` |
 
-The installer already registered a `computermoney` MCP server on a throwaway **signet** wallet.
-Two notes:
+## Environment and setup
 
-1. **Restart your MCP client to load all five tools.** An older build exposed only
-   `cm_send` + `cm_balance`; the current binary adds `cm_pay`, `cm_confs`, `cm_collections`.
-   The registration points at the `cm` binary path, so restarting relaunches `cm mcp` with
-   the latest build.
-2. Manual registration (Claude Desktop, another client) — point the config at the binary:
+Register `cm mcp` as an MCP server with the `cm` binary path and the env that pins the
+wallet, network, and home directory. In Claude Code:
+
+```sh
+claude mcp add -s user computermoney \
+  -e CM_NETWORK=signet -- "$HOME/.cargo/bin/cm" mcp
+```
+
+Manual registration (Claude Desktop, another client) points the config at the binary:
 
 ```json
 {
@@ -54,73 +81,61 @@ Two notes:
 }
 ```
 
-## Demo A — pure MCP, one wallet (works immediately)
-
-No daemon, no second agent. Just talk to the buyer wallet:
-
-- *"what's my computermoney balance?"* → `cm_balance`
-- *"send 1000 sats to `<signet-address>`"* → `cm_send` → returns a txid + explorer link
-- *"how many confirmations on `<txid>`?"* → `cm_confs`
-
-This shows natural-language Bitcoin settlement through MCP. It is a raw on-chain send, not the
-discover→talk→settle pipeline (that is Demo B).
-
-## Demo B — the full pipeline, agent to agent
-
-The money shot: one agent pays another over **DHT → WireGuard → Bitcoin L1**, driven by a
-plain sentence on the buyer side.
-
-**1. Start the seller daemon (CLI, one line).** A second identity in its own store:
-
-```sh
-export CM_NETWORK=signet
-CM_HOME=~/cm-seller cm setup                                   # create the seller wallet
-CM_HOME=~/cm-seller cm id                                      # -> the seller CARD KEY (copy it)
-CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820 &
-```
-
-**2. (Optional) register the seller as its own MCP server** so its agent can watch arrivals:
+To run a second identity (for example a seller alongside a buyer) register a second server
+with its own `CM_HOME`:
 
 ```sh
 claude mcp add -s user computermoney-seller \
   -e CM_NETWORK=signet -e CM_HOME="$HOME/cm-seller" -- "$HOME/.cargo/bin/cm" mcp
 ```
 
-**3. Pay from the buyer agent, in language:**
+### Environment variables the code reads
 
-> *"pay 5000 sats to `<seller-card-key>`"*
-
-The client calls `cm_pay(card_key, 5000)`, which resolves the seller's card on the DHT,
-opens the WireGuard tunnel to `127.0.0.1:51820`, asks for a fresh address, broadcasts 5000
-signet sats, and returns the txid.
-
-**4. Confirm arrival from the seller agent:**
-
-> *"did a payment land? show collections"* → `cm_collections`
-> *"confirmations on `<txid>`?"* → `cm_confs`
-
-The seller daemon's log also prints `verified <txid> pays 5000 sat to our address` — the
-receipt is taken from the chain, never from the buyer's claim.
-
-## Watching each layer work
-
-The pipeline is three layers you can see move independently. For a demo, keep the seller
-daemon's terminal visible and put these next to it.
-
-| Layer | What proves it | Where to look |
+| Variable | Read at | Meaning |
 |---|---|---|
-| **DHT** (discover) | seller prints `[serve] published card <key> @ 127.0.0.1:51820`; the buyer prints `resolving card <8hex>… (DHT)` then `dialing …`. The card is a signed BEP-44 record on the public BitTorrent DHT — no server holds it. | daemon log + `cm_pay` progress |
-| **WireGuard** (talk) | seller prints `[serve] session opened with <buyer-wg-key>`. And the wire is genuinely encrypted — sniff it: `sudo tcpdump -i lo0 -X udp port 51820` shows ciphertext, never the JSON messages. | logs + `tcpdump` |
-| **Bitcoin L1** (settle) | `cm_pay` returns `txid …` + an explorer URL — open it and watch the tx pay the seller's address. The seller prints `verified <txid> pays 5000 sat to our address`, and `cm_confs` walks it to *final*. | block explorer + logs |
+| `CM_NETWORK` | `storage.rs:240` | Active Bitcoin network: `mainnet` (default) `\|` `testnet` `\|` `signet`. Anything unset/unrecognized is mainnet. |
+| `CM_PASSPHRASE` | `main.rs:61`, `mcp.rs:443`, `storage.rs:303` | Unlocks (and, at setup, seals) the encrypted seed. Required on mainnet; absent on signet/testnet the mnemonic is stored plaintext. |
+| `CM_POLICY` | `policy.rs:109` | Path override for the policy file (default `~/.config/computermoney/policy.json`). |
+| `CM_HOME` | `storage.rs:88` | Absolute path overriding the config root, so several agents can run on one machine without sharing state. |
+| `CM_MNEMONIC` | `storage.rs:293` | Explicit escape hatch: a plaintext mnemonic that wins over the stored wallet. Refused on mainnet. |
+| `CM_ID` | `storage.rs:297` | Identity prefix to pick among several wallets under one home. |
+| `CM_ESPLORA` | `storage.rs:265` | Override the esplora endpoint used for chain sync. |
 
-## Notes
+The passphrase and seed come from this registration env, never from a tool call. Per the
+server's own `initialize` instructions, an agent should not set env vars or run shell
+commands to "prepare" cm; it just calls the tools.
 
-- **Signet vs testnet.** The demo wallet is signet (30-second blocks, reliable
-  [faucet](https://faucet.mutinynet.com/), 3-conf final ≈ 90 s). Testnet3 works the same way
-  (`CM_NETWORK=testnet`) but is slower and its faucets are often dry.
-- **`cm_pay` not listed?** Restart the client (see Setup step 1).
-- **`no card found on the DHT`** — give the seller daemon 30–60 s to propagate after start,
-  then retry. To skip the DHT and exercise only WireGuard + L1, there is no MCP form; use the
-  CLI direct path `cm pay <wg-pubkey>@127.0.0.1:51820 <sats>`.
-- **Mainnet** is opt-in and fail-closed: unlock a sealed seed with `CM_PASSPHRASE` and set a
-  `CM_POLICY` spend cap, or `cm` refuses to broadcast.
+### Mainnet fail-closed spend cap
+
+The spend policy is data loaded from `~/.config/computermoney/policy.json` (override with
+`CM_POLICY`). An absent file deserializes to a permissive default: no restrictions, which
+is fine for a signet/testnet demo (`policy.rs:106-115`). The optional fields are
+`max_payment_sats`, `daily_limit_sats`, `max_fee_sats`, and `blocked_addresses`; each
+missing field turns that limit off (`policy.rs:27-38`).
+
+On mainnet the wallet fails closed. `ensure_mainnet_capped` (`policy.rs:93-104`) refuses a
+broadcast unless the effective policy sets **at least one spend cap** (`max_payment_sats`
+or `daily_limit_sats`) **and** a fee cap (`max_fee_sats`). An absent or empty (`{}`)
+policy is the permissive default, so it is rejected on mainnet with a typed error:
+`MainnetUncapped` when no spend cap is set, `MainnetNoFeeCap` when a spend cap is set but
+the fee is left unbounded. Signet and testnet stay permissive by design and the guard
+never trips (`policy.rs:247-251`). So on mainnet, write a `policy.json` with at least one
+spend cap and a fee cap before any send will broadcast.
+
+The other gates run on every send too: `check_amount` enforces the per-payment cap and a
+rolling 24-hour daily cap (`DAILY_WINDOW_SECS = 86_400`), `check_address` enforces the
+blocklist, and `check_fee` bounds the fee once the transaction is built
+(`policy.rs:119-149`).
+
+## Safety
+
+- **The seed never crosses the tool boundary.** No tool takes a mnemonic, seed, or
+  passphrase argument. The wallet is unlocked once from the server's registration env
+  (`CM_PASSPHRASE`/`CM_MNEMONIC`) and reused for the process lifetime (`mcp.rs:16-21`,
+  `55-69`).
+- **The spend cap has a single choke point.** `ensure_mainnet_capped` is the one
+  definition of the mainnet fail-closed guard, and every send path routes through
+  `chain::send`, which calls it (`policy.rs:84-104`). The MCP `cm_send` and Silent
+  Payments paths additionally gate `check_amount` + `check_address` up front
+  (`mcp.rs:758-775`, `942-953`); the tunnel `cm_pay` path gates inside `net::run_payer`,
+  so the policy is enforced exactly once regardless of which tool moved the money.

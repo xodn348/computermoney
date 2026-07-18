@@ -29,10 +29,11 @@ its sp code, and a buyer pays it on-chain and gets the content back.
 
 ## Pages
 
+- [Architecture](architecture.md) — basic principles and the DHT/WireGuard/Bitcoin mechanism.
 - [Payment flow](payment-flow.md) — the function-by-function order inside a single payment.
-- [MCP usage](mcp-usage.md) — driving the wallet in plain language over MCP.
+- [Reference](reference.md) — modules, key data structures (variables), functions, CLI commands, and env vars.
+- [MCP usage](mcp-usage.md) — the MCP tools and driving the wallet in plain language.
 - [Try it (2 terminals)](demo-2-terminal.md) — run the full pipeline on one machine.
-- [Demo video script](demo-video-script.md) — a shot list for the 2-minute demo.
 
 ## For AI agents
 

@@ -1,6 +1,6 @@
 ---
 title: Demo video script
-nav_order: 5
+nav_order: 7
 ---
 
 A ~2-minute screen recording where an agent pays another agent in Bitcoin, and you can

@@ -1,25 +1,37 @@
-# computermoney — full documentation
+# computermoney: full documentation
 
-> Bitcoin-native payments between AI agents. This file inlines the README and all docs for AI consumption.
+This file inlines the README and every docs page as one plain-text file for AI agents. Source: https://github.com/xodn348/computermoney
 
 
-
-========================================================================
+======================================================================
 # README  (README.md)
-========================================================================
+======================================================================
 
 # computermoney
 
-> Money that computers use. **Bitcoin-native payments between AI agents.**
+[![Docs](https://img.shields.io/badge/docs-live-2ea44f)](https://xodn348.github.io/computermoney/) [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-`cm` is a self-custodial **Bitcoin L1 (mainnet)** wallet for AI agents. Each agent runs its
-own `cm`, holds its own seed, and pays other agents in real bitcoin, one Taproot transaction
-per payment. No account, no API key, no payment processor. **The key is the identity, not the
-IP:** a peer is addressed by its cryptographic card key, and a payee that publishes a static
-silent-payment code can be paid while fully offline.
+AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies are needed.
 
-> Real money by default. You can also experiment risk-free on **signet/testnet**
-> (`CM_NETWORK=signet`) with worthless coins; the one-line installer starts you there.
+## Demo
+
+An agent driving `cm` in plain language, end to end: no processor, no account, real bitcoin.
+
+_The two clips are recorded on a test network (signet), so the coins are worthless. On mainnet the same commands and the same flow move real bitcoin._
+
+**1. Pay a peer found on the DHT.** The agent reads B's card from the DHT and pays its static
+silent-payment code on Bitcoin L1. B can be offline.
+
+
+https://github.com/user-attachments/assets/8edbbf52-0b79-4d43-97a9-a3368602788c
+
+
+**2. Sell data over HTTP 402.** A seller serves a dataset behind a 402; the buyer's agent
+auto-pays within its cap and gets the file back.
+
+
+https://github.com/user-attachments/assets/80b223b2-cc49-4f2d-90b2-2d435d25d60c
+
 
 ## How it works
 
@@ -72,10 +84,11 @@ curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.
 ```
 
 Builds and installs the `cm` binary (needs a [Rust toolchain](https://rustup.rs) and a C
-compiler) and, if Claude Code is detected, registers the `cm mcp` server. It starts you on a
-**signet demo wallet** so you can try everything with worthless coins; fund the printed address
-from the [faucet](https://faucet.mutinynet.com/). Move to real bitcoin in
-[Going to mainnet](#going-to-mainnet-real-bitcoin).
+compiler) and, if Claude Code is detected, registers the `cm mcp` server. `cm` runs on
+**Bitcoin mainnet by default**, which is the real product. So the first run is safe, the
+one-line installer opts the demo wallet down to **signet** (worthless coins) that you can fund
+from the [faucet](https://faucet.mutinynet.com/). When you want real bitcoin, set up
+[mainnet](#mainnet-real-bitcoin).
 
 ## Using it
 
@@ -120,11 +133,12 @@ Here is the exact sequence and the natural-language prompt that drives each step
 forward immediately with *"pay …"*). The payment terms travelled inside the protocol; no key,
 invoice, or account was handed around.
 
-## Going to mainnet (real bitcoin)
+## Mainnet (real bitcoin)
 
-The installer wallet is signet. For real money, register the MCP server with
-`CM_NETWORK=mainnet`, unlock a sealed seed with a passphrase, and **set a spend cap**: on
-mainnet `cm` refuses to broadcast without one.
+`cm` is a mainnet wallet by default; the one-line installer only opts down to signet so the
+first run is safe. For real money, register the MCP server with `CM_NETWORK=mainnet`, unlock a
+sealed seed with a passphrase, and **set the caps**: on mainnet `cm` refuses to broadcast
+without them.
 
 ```json
 "env": {
@@ -134,13 +148,14 @@ mainnet `cm` refuses to broadcast without one.
 }
 ```
 ```json
-// policy.json — a limit the agent cannot talk its way around
-{ "max_payment_sats": 50000, "daily_limit_sats": 200000 }
+// policy.json: limits the agent cannot talk its way around
+{ "max_payment_sats": 50000, "daily_limit_sats": 200000, "max_fee_sats": 5000 }
 ```
 
-The cap is **fail-closed**: an absent or empty policy on mainnet rejects the send before any
-signing, at the single chokepoint every send path funnels through. Signet and testnet stay
-permissive for experimentation.
+The guard is **fail-closed**: on mainnet a send is rejected before any signing unless the policy
+sets a spend cap (`max_payment_sats` or `daily_limit_sats`) and a fee cap (`max_fee_sats`). An
+absent or empty `policy.json` (`{}`) counts as uncapped and is refused, at the single chokepoint
+every send path funnels through. Signet and testnet stay permissive for experimentation.
 
 ## Commands
 
@@ -161,222 +176,979 @@ cm mcp                            run as an MCP server so an agent drives it in 
 
 `cm mcp` exposes the whole pipeline to any MCP client (Claude Code, Claude Desktop, or your
 own agent) as plain-language tools, so *"pay 5000 sats to `<card-key>`"* just works with no
-shell and no key handling. The seed never crosses the tool boundary. See
-[`docs/mcp-usage.md`](docs/mcp-usage.md).
+shell and no key handling. The seed never crosses the tool boundary. See the
+[MCP guide](https://xodn348.github.io/computermoney/mcp-usage.html).
 
 ## Docs
 
-- [`docs/payment-flow.md`](docs/payment-flow.md) — the function-by-function order inside `cm pay` and the seller daemon.
-- [`docs/mcp-usage.md`](docs/mcp-usage.md) — driving the wallet in plain language over MCP.
-- [`docs/demo-2-terminal.md`](docs/demo-2-terminal.md) — try the full pipeline on one machine (signet).
-- [`docs/demo-video-script.md`](docs/demo-video-script.md) — shot list for the demo video.
-- [`llms.txt`](llms.txt) — an AI-readable map of the docs.
+Full docs, including the payment flow, MCP usage, and a runnable walkthrough:
+**[xodn348.github.io/computermoney](https://xodn348.github.io/computermoney/)**. For agents,
+an AI-readable map lives at [`llms.txt`](https://xodn348.github.io/computermoney/llms.txt).
 
 ## License
 
-**[GNU AGPL v3.0](LICENSE)**, Copyright (C) 2026 Ebsilon, Inc. Network use counts as
-distribution: run a modified `cm` as a service and you must offer its users the source. See
-[`LICENSE`](LICENSE) for the exact terms.
+Licensed under the [GNU AGPL v3.0](LICENSE), Copyright (C) 2026 Ebsilon, Inc.
 
-The name and logo are trademarks of Ebsilon, Inc., covered separately by the
-[trademark policy](TRADEMARK.md): the code is yours to build on under the AGPL, but
-"computermoney" as a product name is not. Contributions require a Developer Certificate of
-Origin sign-off (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
-
-Third-party components (all permissive) are listed in
-[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+"computermoney" is a trademark of Ebsilon, Inc. ([trademark policy](TRADEMARK.md)).
+Third-party notices: [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md). Contributing
+requires a DCO sign-off ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 
+======================================================================
+# Architecture  (docs/architecture.md)
+======================================================================
 
-========================================================================
+
+# Architecture: basic principles and mechanism
+
+This page explains how `cm` (the `computermoney` binary) actually works: the principles it is built on, and the mechanism of each of its three layers. It is the "why and how" companion to two more detailed pages: the [reference](reference.md) lists every module, data structure, function, CLI command, and environment variable, and the [payment flow](payment-flow.md) walks a single payment function by function in order. To drive the whole thing from an agent in plain language, see [MCP usage](mcp-usage.md).
+
+## 1. Principles
+
+`cm` is a self-custodial Bitcoin L1 (mainnet) wallet that each AI agent runs itself. Five ideas hold the whole design together.
+
+- **Self-custodial.** Each agent holds its own BIP-39 mnemonic and nothing else. At rest the seed is sealed with a passphrase: Argon2id (memory-hard) stretches the passphrase to a 32-byte key and ChaCha20-Poly1305 encrypts the mnemonic under it, so a stolen `seed.enc` resists offline brute-force and a wrong passphrase fails the AEAD tag rather than returning garbage (`storage::save_encrypted` / `load_encrypted`). There is no server holding keys.
+- **Agent-run, no processor, no account.** There is no Stripe, Coinbase, or PayPal in the path, and no signup or invoice. An agent asks for a resource or names a payee and the payment happens underneath it. `cm mcp` exposes the wallet to an agent as plain-language tools, and the seed never crosses that tool boundary.
+- **Key is identity.** One mnemonic is the agent's entire identity. Every other key is a deterministic branch of it (see the derivation table below), so the same secret secures the money, the tunnel, and the discovery card.
+- **Chain is truth.** No peer's message is ever trusted to mean money moved. The receiver credits the real on-chain output and lets confirmations advance it. A payment notice over the tunnel is only a hint that makes the receiver look at the chain sooner.
+- **Addressed by a cryptographic key.** A peer is found and paid by its card key (a 32-byte ed25519 public key), with no central directory. A payee that publishes a static silent-payment code can be paid while fully offline.
+
+### Key is identity: one seed, every branch
+
+`wallet.rs` turns the one mnemonic into a master `Xpriv` and derives each role from a fixed path. `{coin}` is 0 on mainnet, 1 on any test network.
+
+| Role | Path | Used for |
+|---|---|---|
+| Receive (external) | `m/86'/{coin}'/0'/0/{i}` | BIP-86 Taproot receive address per index |
+| Change (internal) | `m/86'/{coin}'/0'/1/{i}` | change outputs |
+| Ledger signing | `m/86'/{coin}'/0'/2/0` | signs each append-only ledger entry |
+| Network identity | `m/86'/{coin}'/0'/3/0` | the 32-byte seed behind BOTH the tunnel key and the card key |
+| SP scan | `m/352'/{coin}'/0'/1'/0` | detects incoming silent payments (hot) |
+| SP spend | `m/352'/{coin}'/0'/0'/0` | spends a received silent payment (can stay cold) |
+
+The network-identity branch (3) is the interesting one: those same 32 bytes serve two network roles. `tunnel::identity` clamps them into an X25519 WireGuard static secret, and `discover::card_pubkey_bytes` feeds them to an ed25519 signing key. ed25519 hashes its seed before use, so the card scalar and the tunnel scalar are unrelated even though one secret backs both. A signature can never be replayed as a Diffie-Hellman key or vice versa.
+
+Two distinct public handles fall out of this, and it is worth keeping them straight:
+
+- **Card key**: the ed25519 public key (64 hex), the resolve-and-pay handle you share. This is what `cm id` prints and what a peer looks up on the DHT. "A peer is its card key."
+- **WireGuard key** (`wallet::id_hex`): the X25519 public key (64 hex), the tunnel identity. It travels inside the card as the `wg` field, doubles as the direct-dial handle (`wg-key@host:port`), and its first 8 hex chars name the wallet's on-disk state directory.
+
+## The three layers
+
+```
+   Agent A (payer)                                     Agent B (payee)
+   one seed -> all keys                                one seed -> all keys
+        |                                                    |
+        |  (1) DISCOVER  ---- BitTorrent Mainline DHT --->   |  publishes a signed card
+        |      resolve B's card key (ed25519)                |  { wg, ep[], sp, at }
+        |      -> B's sp code + WG endpoint                  |  under its card key
+        |                                                    |
+        |  (2) TALK      <--- WireGuard tunnel (UDP) --->    |  answers AddrRequest with
+        |      messages only, never coins, LAN/localhost     |  a fresh address
+        |      (the offline path skips this layer)           |
+        |                                                    |
+        |  (3) SETTLE    ---- Bitcoin L1 (one Taproot tx) -> |  scans / reconciles the chain
+        v      the chain is the source of truth              v  (the only proof of receipt)
+   +----------------------- Bitcoin network ------------------------+
+   |   0 conf = Pending   |   1-2 conf = Soft   |   3+ conf = Final |
+   +---------------------------------------------------------------+
+```
+
+Each layer does exactly one job. Discovery finds a peer, the tunnel carries coordination messages, and Bitcoin L1 moves the actual value. The coordination/settlement split is enforced in code: the payment protocol in `net.rs` sits behind a `Wire` trait and does not know which transport carries its bytes, which is why the tests can swap the WireGuard tunnel for a plain TCP stand-in and the payment logic does not move.
+
+## Layer 1: Discover (BitTorrent Mainline DHT)
+
+The problem is finding a peer with no server to ask. `cm` solves it with BEP-44 mutable items on the BitTorrent Mainline DHT, the most widely deployed serverless system there is (roughly 10 million always-on nodes). Grounded in `discover.rs` and `protocol.rs`.
+
+**What a card key is.** An agent's discovery identity is a 32-byte ed25519 public key derived from the network-identity seed (`discover::card_pubkey_bytes`, printed as 64 hex by `card_pubkey_hex`). In BEP-44 the storage address of a mutable item is derived from an ed25519 public key, and only the holder of the matching secret can write to it. So the card key is simultaneously the peer's name, its lookup address, and its write authorization. There is nothing else to trust.
+
+**What the signed card contains.** The `Card` struct is deliberately tiny (BEP-44 caps a mutable value at 1000 bytes, checked as `MAX_CARD_BYTES` before publish):
+
+- `wg`: the 64-hex X25519 WireGuard public key, the tunnel identity, always present.
+- `ep`: an optional list of endpoints (`"host:port"`, or `"[v6]:port"`), the addresses a payer dials. There may be several (a v4 and a v6) or none. A dial-out-only buyer publishes no endpoint, since it never accepts inbound sessions. Publishing an endpoint exposes that IP to every holder of the card key, so operators publish a hop/VPS address or nothing.
+- `sp`: the optional silent-payment code (`sp1…` on mainnet, `tsp1…` elsewhere). A payer who resolves this can pay it on-chain while the agent is entirely offline, no tunnel. It is optional so pre-silent-payment (v1) cards still parse.
+- `at`: publication time in unix seconds, which doubles as the record's monotonic sequence number so a later publish supersedes an earlier one.
+
+Notably the card carries only what discovery needs (where and how to reach the agent, and the offline pay-to code). It says nothing about balances or history.
+
+**Publish.** `discover::publish` serializes the card to JSON, checks the size cap, signs it with the ed25519 secret, and puts it as a `MutableItem` under the salt `b"cm"` with `seq = card.at`. The salt namespaces cm's records so the same key used by another application resolves to a different target. This is a blocking call on the DHT client's own thread (cm is deliberately synchronous, with no async runtime).
+
+**Resolve.** `discover::resolve` takes a peer's card public key and calls `get_mutable_most_recent` under the same salt, retrying up to `RESOLVE_ATTEMPTS` (5) times because a single cold lookup can miss a record that has not yet propagated to the nodes this client happens to query. Signature verification is enforced by the DHT layer: a record that does not verify against the given card key is never returned, so a resolver cannot be handed a forged card.
+
+Reference: [BEP 44 (DHT mutable storage)](https://www.bittorrent.org/beps/bep_0044.html).
+
+## Layer 2: Talk (WireGuard)
+
+When both agents are online and want a live exchange, `cm` opens a real WireGuard tunnel between them. It carries coordination messages only, never coins. Grounded in `tunnel.rs`, `net.rs`, and `serve.rs`.
+
+**Keyed by the same seed.** `tunnel::identity` builds the WireGuard X25519 static secret directly from the wallet's network-identity branch (3), the same 32 bytes described above. The tunnel uses boringtun, which gives the genuine WireGuard protocol: the Noise_IK handshake and ChaCha20-Poly1305 transport. There is no separate key management; the wallet that holds the money is the wallet that authenticates the channel.
+
+**Messages only, never coins.** The only things that cross the tunnel are the four variants of `protocol::Message`:
+
+- `AddrRequest { sats }`: "I want to pay you this much, give me an address."
+- `AddrResponse { address, index }`: a fresh receive address plus its derivation index (the index doubles as an RBF-stable payment identifier).
+- `Notify { txid, sats }`: "I broadcast the payment." This is an untrusted hint, not proof.
+- `Chat { text }`: free-form coordination. Negotiation over price or scope is just chat between two LLMs, so only the money-touching verbs are given a formal shape.
+
+Each message is length-prefixed JSON. Because WireGuard tunnels IP, `cm` wraps each frame in a minimal IPv4 packet (`wrap_ip`, using an experimental protocol number since there is no real L4 inside), then encrypts it. A test in `tunnel.rs` confirms the plaintext JSON never appears in the encrypted datagram.
+
+**LAN/localhost, and the offline path skips it.** The tunnel runs over UDP and is meant for a LAN or localhost exchange, not an open-internet service. It is entirely optional: a payer who has resolved a card's `sp` code can settle on-chain with no handshake at all, and the receiver books the money later by scanning the chain (Layer 3). That offline path is the common case; the tunnel is only for a live, interactive exchange.
+
+**The receiver never trusts the notice.** In `net::run_receiver`, an `AddrRequest` gets a fresh address (the ledger records an `AddressIssued`), but a `Notify` is treated as hostile input. The receiver does not credit the claimed amount. Instead it queries the chain (`chain::deposits_to`) to confirm that this txid actually pays the address it issued this session, and books the real on-chain amount via `record_received`. If the transaction is not visible yet, it records nothing and lets the daemon's chain-watch book it once it lands. `net::run_payer` mirrors this: it gates the amount against policy before contacting the peer, asks for an address, checks that address against the blocklist, settles on-chain, records the send, and only then notifies.
+
+**The resident daemon.** `serve.rs` is the seller's body: one single-threaded loop that never sleeps and does three duties. REPUBLISH keeps the DHT card fresh (every 45 minutes, so it never falls out of the DHT). WATCH polls the chain for deposits with no live session and advances pending payments, plus scans for silent-payment income (every 60 seconds). ACCEPT answers any buyer's handshake using `FramedTunnel::accept_any`, which learns the initiator's static key from the handshake itself rather than pinning one expected peer in advance. The loop holds an exclusive directory lock for its whole life, because the ledger is a single-writer file, and its log lines are the operator's only UI.
+
+Reference: [WireGuard whitepaper](https://www.wireguard.com/papers/wireguard.pdf).
+
+## Layer 3: Settle (Bitcoin L1)
+
+Value moves as exactly one Taproot transaction per payment, over the payer's own link to the Bitcoin network (not the tunnel). Grounded in `chain.rs`, `sp.rs`, and `scan.rs`.
+
+**Building one transaction.** `chain.rs` is where bdk and esplora live. `chain::build_signed` syncs the descriptor's UTXOs, builds a P2TR payment (bdk does branch-and-bound coin selection and change), fetches a recommended feerate clamped into a sane range, enforces the policy fee cap at the last moment the fee is known, and signs. Broadcasting is a separate step (`chain::broadcast`). The send path in `pay.rs` uses that split deliberately: it builds and signs, persists the raw signed tx as a sidecar and appends a durable Pending `Sent` entry, and only then broadcasts. If the process dies in that gap, the payment is still on the work queue and the sidecar lets reconcile rebroadcast it. Every mainnet build first passes a fail-closed guard (`ensure_mainnet_capped`) that refuses to sign without a spend cap.
+
+**Silent Payments (BIP-352): paid while offline.** One published static code lets a payer derive a fresh one-time Taproot output for the receiver, so no address is reused and the receiver need not be online. `sp.rs` is the pure cryptographic core, verified against the official BIP-352 send and receive test vectors.
+
+- *Sender* (`sp::send_address`): sum the secret keys of the chosen transaction inputs into `a_sum`, compute the BIP-352 input hash from the smallest outpoint, derive the shared secret `ecdh = input_hash * a_sum * B_scan`, and from it the one-time output key `P_0 = B_spend + t_0*G`. That key is used verbatim as the Taproot output key. Because a silent-payment address is fixed by the exact inputs that fund it, `chain::build_signed_to_sp` pins its input set before the recipient address even exists.
+- *Receiver* (`scan.rs`): there is no address to watch, so the receiver reads the chain itself. `scan::scan_to_tip` walks blocks from a saved checkpoint to the tip, and for each transaction reconstructs the input public keys from esplora's prevout data (P2TR key-path keys lifted to even Y, P2WPKH keys taken verbatim), then runs the BIP-352 receive check (`sp::receive_check`) with the wallet's scan key: `ecdh = input_hash * b_scan * A_sum`, then derive candidate output keys `k = 0, 1, …` and match them against the transaction's outputs. Each match yields the tweak `t_k`, so the spend key is later recovered as `b_spend + t_k`. Matches above the dust floor are booked as Pending `SpReceived`. A checkpoint (`scan.json`) only advances after a fully successful pass, so an interrupted scan is retried rather than skipped.
+
+**The confirmation ladder.** A booked receipt advances through a status ladder driven purely by confirmation count (`ledger::Status::from_confirmations`), where a confirmation count is `tip_height - block_height + 1`:
+
+- **0 confirmations = Pending.** Seen but not yet mined. Not spendable.
+- **1-2 confirmations = Soft.** Mined and acknowledged as a receipt, but not yet safe against a shallow reorg. Still not spendable.
+- **3+ confirmations = Final.** The delivery gate. Only now does the money count toward spendable balance.
+
+Spendability follows the ladder exactly. `ledger::balance` and `ledger::sp_balance` count a receive only when its effective status is Final, while a send is debited immediately (the money has left). A separate `Failed` status sits off the ladder: it is never inferred from a confirmation count, only set by reconcile when a Sent transaction is proven dead (its inputs are gone), and a Failed send is never debited because it never moved money.
+
+Reference: [BIP-352 (Silent Payments)](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki).
+
+## Also over HTTP 402
+
+The same settlement rail powers a paid-data path: an agent can sell one body behind an HTTP 402 and another can buy it, with no signup, card, or account. Grounded in `paywall.rs` (seller) and `fetch.rs` (buyer).
+
+**Seller.** `paywall::run` serves one fixed body for a fixed price on a bound TCP listener (single-threaded, one buyer at a time). A GET with no valid payment gets back HTTP 402 and a small JSON `Terms` body carrying the seller's static silent-payment code:
+
+```
+HTTP/1.1 402 Payment Required
+{"cm402":1,"sats":800,"pay_to":"sp1…","network":"mainnet"}
+```
+
+The buyer pays that code on-chain and retries the GET with an `X-Payment: <txid>` header. The seller verifies the claim with `scan::tx_pays_me`, which reconstructs the transaction and runs the BIP-352 receive check against the seller's own scan key. If the transaction pays the seller at least the price, and the txid has not already been redeemed this session (a single-use set makes one txid buy at most once), the body is returned. The path is ignored: this endpoint sells exactly one thing. This lean cut is demo-grade on purpose (0-conf delivery, plain HTTP, a bare txid as proof).
+
+**Buyer.** `fetch::fetch` GETs a URL and, on a 402, auto-pays within a caller-supplied cap. It first refuses anything that is not a cm 402 for the right network, then checks that `pay_to` is a silent-payment code for that network and that the quoted price is within `max_sats`. Only then does it apply the standing wallet policy (amount cap, daily window, blocklist), because the amount is only known once the 402 is read. It pays the code with `pay::sp_send`, then retries the GET with the txid as proof up to a few times to cover mempool propagation. The agent driving `fetch` never sees a key or an address: it asks for a resource, and the payment happens underneath.
+
+## Where to go next
+
+- [Payment flow](payment-flow.md): the same single payment, function by function, in the exact order the sender and receiver execute it.
+- [Reference](reference.md): every module, data structure and variable, function, CLI command, and environment variable.
+- [MCP usage](mcp-usage.md): the MCP tools that let an agent drive all of the above in plain language.
+
+Licensed under the GNU AGPL v3.0, Copyright (C) 2026 Ebsilon, Inc.
+
+
+======================================================================
 # Payment flow  (docs/payment-flow.md)
-========================================================================
+======================================================================
 
-This is the wire-level walkthrough of a single payment — what the **sender** and
-**receiver** actually do, in order, the moment each command runs. The high-level
-picture is in the [README](../README.md#how-a-payment-works-wireguard--cm--bitcoin-l1);
-this is the function-by-function detail behind it.
 
-Source of truth: [`src/tunnel.rs`](../src/tunnel.rs) (WireGuard transport) and
-[`src/net.rs`](../src/net.rs) (the transport-agnostic payment protocol).
+This is the wire-level walkthrough of a single payment: what the **sender** and
+**receiver** actually do, function by function, in call order. The high-level
+picture is in [Architecture](architecture.md); the module/type/CLI index is in
+the [Reference](reference.md); driving the same paths from an agent is in
+[MCP usage](mcp-usage.md).
 
-## The key idea: two handshakes, stacked
+A payment settles in one of two shapes, and the sender picks one when it resolves
+the peer:
 
-A payment rides two handshakes that are layered, never mixed:
+- **Live (tunnel) path.** The two agents are both online. The payer opens a
+  WireGuard tunnel, asks the seller for a fresh BIP-86 Taproot address over it,
+  and pays that address on-chain. Entry: `cm pay <pubkey>@<host:port>` (direct),
+  or `cm pay <card-key>` when the resolved card has endpoints but no sp code.
+- **Offline (silent-payment) path.** The payee may be offline. The payer decodes
+  the payee's static silent-payment code (BIP-352), derives a one-time Taproot
+  output from its own inputs, and broadcasts. No tunnel, no address request, no
+  live session. Entry: `cm pay <sp-code>`, or `cm pay <card-key>` when the
+  resolved card carries an sp code (the default, since `cm publish` and
+  `cm serve` always advertise one).
 
-1. **The WireGuard handshake** (Noise_IK, X25519) opens an *encrypted tunnel* between
-   the two agents. This is the "secure pipe" — it authenticates *who* each side is by
-   their X25519 public key (derivation branch 3, the `cm id` value) and encrypts
-   everything sent afterward. This is the line `[wg] tunnel established`.
-2. **The address handshake** (`AddrRequest` → `AddrResponse`) runs *inside* that tunnel.
-   Its only job is to agree on *where the money goes*: the sender does not know a
-   destination address until the receiver mints a fresh one and hands it back.
+Both shapes are one Taproot transaction per payment, confirmed by the chain, and
+recorded in the same signed ledger. The difference is only *how the destination
+address is agreed on*: interactively over WireGuard, or derived offline from a
+published code.
 
-The WireGuard keys secure the channel; `AddrRequest`/`AddrResponse` are the first
-conversation held over that now-encrypted channel. Only after **both** does any Bitcoin
-move — and the coins move over the Bitcoin network, not the tunnel.
+Source of truth for the flow below: [`src/main.rs`](../src/main.rs) (dispatch and
+peer resolution), [`src/tunnel.rs`](../src/tunnel.rs) (WireGuard transport),
+[`src/net.rs`](../src/net.rs) (the transport-agnostic live protocol),
+[`src/pay.rs`](../src/pay.rs) (the build → record → broadcast ordering),
+[`src/chain.rs`](../src/chain.rs) (bdk + esplora), [`src/sp.rs`](../src/sp.rs)
+(BIP-352 math), [`src/scan.rs`](../src/scan.rs) (the receive scanner), and
+[`src/ledger.rs`](../src/ledger.rs) (the append-only signed log and reconcile).
 
-## Sequence
+## Sender path
+
+### 1. Entry and peer resolution — `main.rs:204`
+
+`cm pay <peer> <sats>` reads the peer handle and amount (`main.rs:211-212`), loads
+the wallet (`main.rs:213`), and branches on the *shape* of the handle:
+
+1. **`sp1…` / `tsp1…` prefix** (`main.rs:214`): a silent-payment code. Goes
+   straight to `cli_sp_pay` (`main.rs:216`, defined at `main.rs:39`) — the offline
+   path, no discovery needed.
+2. **`pubkey@host:port`** (`main.rs:219`): a known WireGuard endpoint. Goes to
+   `tunnel::pay` (`main.rs:220`) — the live path, no discovery needed.
+3. **A bare card key** (`main.rs:222`): resolve it on the DHT. `discover::parse_card_key`
+   (`main.rs:222`) then `discover::resolve` (`main.rs:224`, in
+   [`discover.rs`](../src/discover.rs)) looks up the peer's signed card. Then:
+   - if the card carries an sp code (`main.rs:228`), pay it offline via
+     `cli_sp_pay` (`main.rs:230`);
+   - otherwise dial each published endpoint in turn via `tunnel::pay`
+     (`main.rs:243-245`), failing over from one to the next.
+
+So discovery only feeds the resolved sp code or endpoint into the same two paths
+below. Everything after resolution is identical whether the handle came from the
+DHT or was passed directly.
+
+### 2a. Live path — `tunnel::pay` → `net::run_payer` → `pay::send`
 
 ```
-        cm pay (sender A)                          cm receive (receiver B)
- ══════════════════════════                 ══════════════════════════
- tunnel::pay                                 tunnel::serve
-  │ seed → X25519 secret (branch 3)           │ seed → X25519 secret (branch 3)
-  │ bind UDP 0.0.0.0:0                         │ bind UDP :51820  → "listening"  (waits)
-  │                                           │
-  │── 1. WireGuard handshake (Noise_IK) ──────────────────────────────────────
-  │ FramedTunnel::connect                      │ FramedTunnel::accept
-  │ handshake_init ──(msg1 initiation)───────▶ process initiation
-  │ process       ◀──(msg2 response)────────── send back response
-  │ ──keepalive──────────────────────────────▶ process → session ready
-  │ ECDH session keys established              │  ⚠ wrong peer key → InvalidMac HERE
-  │ "[wg] tunnel established"                  │  "[wg] tunnel established with peer"
-  │                                           │
-  │── from here every message is sealed inside the encrypted tunnel ──────────
- net::run_payer                              net::run_receiver  (recv loop)
-  │ policy.check_amount   (spend gate)         │
-  │                                           │
-  │── 2. address handshake ───────────────────────────────────────────────────
-  │ send AddrRequest{sats} ──(tunnel)────────▶ recv AddrRequest
-  │                                           │   Receiver::handle → derive a fresh
-  │                                           │   BIP-86 address (index++)
-  │                                           │   ledger.append(AddressIssued, index)
-  │ recv ◀──── AddrResponse{addr, index} ───── send AddrResponse
-  │ policy.check_address(addr)  (blocklist)    │
-  │                                           │
-  │── 3. settle on Bitcoin L1 (NOT the tunnel — the open internet) ───────────
-  │ chain::send: sync UTXOs (esplora)          │
-  │   → build tx → recommended_feerate         │
-  │   → Schnorr-sign → broadcast → txid        │
-  │ ledger.append(Sent)   ← recorded BEFORE notifying (crash-safe)
-  │                                           │
-  │ send Notify{txid, sats} ──(tunnel)───────▶ recv Notify
-  │ print txid + explorer link                 │   ledger.append(Received, Pending)
-  │ done                                       │   ledger::reconcile → query confs on-chain
-  │                                           │   advance status (0/1/3 = Pending/Soft/Final)
-  │                                           │   keep listening; peer idle → exit
+   cm pay <pubkey>@<host:port> (payer A)      cm serve (seller B)
+ ═══════════════════════════════════════     ══════════════════════════
+ tunnel::pay                                  serve::run
+  │ identity() → X25519 secret (branch 3)      │ lock_dir + open signed ledger
+  │ bind UDP 0.0.0.0:0                          │ bind UDP :51820, loop:
+  │                                             │   REPUBLISH · WATCH · ACCEPT
+  │── WireGuard handshake (Noise_IK) ────────────────────────────────────────
+  │ FramedTunnel::connect ──(initiation)──────▶ FramedTunnel::accept_any
+  │                       ◀──(response)──────── (learns A's key from handshake)
+  │ ──(keepalive)─────────────────────────────▶ session ready
+  │ "[wg] tunnel established"                   │
+  │── every message now sealed inside the tunnel ────────────────────────────
+ net::run_payer                               net::run_receiver
+  │ check_amount (spend gate)                   │
+  │ send AddrRequest{sats} ───────────────────▶ rx.handle → wallet.address(i)
+  │                                             │   append AddressIssued{i}
+  │ recv ◀── AddrResponse{addr, i} ──────────── send AddrResponse
+  │ check_address(addr) (blocklist)             │
+  │── settle on Bitcoin L1 (NOT the tunnel) ─────────────────────────────────
+  │ pay::send:                                  │
+  │   chain::build_signed (sync→build→sign)     │
+  │   write_sidecar → append Sent{Pending}      │
+  │   chain::broadcast → txid                   │
+  │ send Notify{txid, sats} ──────────────────▶ recv Notify → verify on-chain
+  │ print txid + explorer link                  │   record_received(REAL sats)
+  │ done                                        │   reconcile → advance ladder
 ```
 
-## What the sender does — `cm pay <peer-pubkey>@<host:port> <sats>`
+In call order:
 
-`main.rs` → `tunnel::pay` → `net::run_payer`:
+1. **Open the tunnel.** `tunnel::pay` (`tunnel.rs:351`) derives this agent's
+   X25519 secret from the seed via `identity` (`tunnel.rs:358`, derivation branch
+   3), parses the peer's WG public key (`tunnel.rs:359`), opens the signed ledger
+   (`tunnel.rs:361`), reads the descriptors (`tunnel.rs:362`), binds a UDP socket
+   (`tunnel.rs:364`), and runs the WireGuard initiator handshake with
+   `FramedTunnel::connect` (`tunnel.rs:365`, handshake at `tunnel.rs:159`). A wrong
+   peer key fails the handshake here, before any payment message is sent. On
+   success it prints `[wg] tunnel established` (`tunnel.rs:366`) and calls
+   `net::run_payer` (`tunnel.rs:367`).
+2. **Amount gate.** `net::run_payer` (`net.rs:102`) loads policy (`net.rs:111`),
+   folds the recent spend window with `led.spent_since` (`net.rs:112`), and runs
+   `policy.check_amount` (`net.rs:113`) before the first message, so an over-limit
+   payment never opens the conversation.
+3. **Ask for an address.** Send `AddrRequest{sats}` (`net.rs:115`), then block
+   until an `AddrResponse{address, index}` comes back (`net.rs:116-121`).
+4. **Address gate.** `policy.check_address` (`net.rs:123`) checks the blocklist now
+   that the destination is known.
+5. **Build, record, broadcast.** `crate::pay::send` (`net.rs:126`, defined at
+   `pay.rs:33`) is the ordering-critical core:
+   - `chain::build_signed` (`pay.rs:41`, in `chain.rs:63`) fails closed on an
+     uncapped mainnet policy (`chain.rs:74`), syncs the descriptor UTXOs from
+     esplora (`chain.rs:78-81`), parses the recipient (`chain.rs:83`), picks the
+     recommended feerate (`chain.rs:88`), lets bdk select coins and build
+     (`chain.rs:89-92`), enforces the fee cap before signing (`chain.rs:96-101`),
+     and Schnorr-signs (`chain.rs:103`), returning the signed tx *without*
+     broadcasting.
+   - `led.write_sidecar` (`pay.rs:48`) persists the raw signed tx as
+     `pending/<txid>.tx`, fsync'd.
+   - `led.append(Entry::Sent{… Status::Pending})` (`pay.rs:52`) writes the durable
+     record *before* the money moves. This is the line that closes the
+     crash-between-broadcast-and-record gap: after it, a crash cannot lose the
+     payment.
+   - `chain::broadcast` (`pay.rs:63`, in `chain.rs:447`) is the only step that
+     moves money.
+6. **Notify, then print.** Send `Notify{txid, sats}` over the tunnel
+   (`net.rs:129`) as a fast-path hint, and print the txid and explorer link
+   (`net.rs:130-132`). The Notify is not the source of truth; the receiver
+   confirms on-chain.
 
-1. **Derive identity and connect.** Derive this agent's X25519 secret from the seed
-   (branch 3), bind a UDP socket, and run the WireGuard *initiator* handshake to the
-   peer's address, keyed to the peer's X25519 public key (`FramedTunnel::connect`). If
-   that public key is wrong, decryption fails with `InvalidMac` — the **handshake**
-   breaks, before any payment message is ever sent.
-2. **Amount gate.** `policy.check_amount` runs before the first message, so an
-   over-limit payment never even opens the conversation.
-3. **Ask for an address.** Send `AddrRequest{sats}` over the tunnel; block until
-   `AddrResponse{address, index}` comes back.
-4. **Address gate.** `policy.check_address` checks the blocklist now that the
-   destination is known.
-5. **Settle on-chain.** `chain::send` syncs the wallet's UTXOs from esplora, builds the
-   transaction, fetches the network's recommended feerate, Schnorr-signs, and broadcasts
-   to the Bitcoin network. This is *not* carried by the tunnel — it is the sender's own
-   link to Bitcoin (the open internet).
-6. **Record, then notify.** Append a `Sent` entry to the signed ledger *before* sending
-   `Notify{txid, sats}`, so a crash after broadcast still leaves the payment on the work
-   queue. Print the txid and explorer link.
+### 2b. Offline path — `cli_sp_pay` → `pay::sp_send` → `chain::build_signed_to_sp`
 
-## What the receiver does — `cm receive <payer-pubkey> [bind]`
+```
+   cm pay <sp-code> (payer A)                payee B (offline, no session)
+ ══════════════════════════════            ═══════════════════════════════
+ cli_sp_pay                                 (nothing needs to be running)
+  │ check_amount + check_address(code)
+  │ pay::sp_send:
+  │   sp::decode(code) → (scan, spend, net)
+  │   led.sp_utxos()  (spend earned SP income too)
+  │   chain::build_signed_to_sp:
+  │     sync + pin inputs,
+  │     sp::send_address → one-time P2TR addr
+  │     sign (bdk + manual key-path)          ┌── later, B runs cm serve / cm balance
+  │   check_address(derived addr)             │   scan::scan_to_tip:
+  │   write_sidecar → append Sent{Pending}    │     walk blocks, tx_matches →
+  │   chain::broadcast → txid                 │     sp::receive_check (BIP-352)
+  │   record_sp_spent(consumed inputs)        │   record_sp_received{Pending}
+  │ print txid                                │   reconcile → confs → ladder → Final
+  ▼ (no tunnel, no AddrRequest)               │   sp_utxos() now spendable
+```
 
-`main.rs` → `tunnel::serve` → `net::run_receiver`:
+In call order:
 
-1. **Listen and handshake.** Bind a UDP socket and wait. Run the WireGuard *responder*
-   handshake (`FramedTunnel::accept`), authenticating the initiator against the
-   `<payer-pubkey>` you passed. The tunnel is up once the keepalive completes.
-2. **Issue a fresh address.** On `AddrRequest{sats}`: `Receiver::handle` derives the next
-   unused BIP-86 address, appends `AddressIssued{index}` to the ledger, and replies with
-   `AddrResponse{address, index}`. A fresh address per payment means no address reuse, and
-   the index later binds the payment to this issuance.
-3. **Record the notify.** On `Notify{txid, sats}`: append a `Received` entry (status
-   `Pending`).
-4. **Reconcile against the chain.** Do not trust the `Notify` — `ledger::reconcile`
-   queries the txid's confirmations on-chain and advances the ledger status
-   (0/1/3 confs = Pending/Soft/Final). The chain, not the peer's message, is the source
-   of truth for whether money arrived.
-5. **Keep serving** until the peer goes idle (the socket read times out and `recv`
-   returns `None`).
+1. **Spend gates.** `cli_sp_pay` (`main.rs:39`) opens the signed ledger
+   (`main.rs:40`), loads policy (`main.rs:42`), and runs `check_amount`
+   (`main.rs:44`) and `check_address` against the sp code handle (`main.rs:45`) —
+   the offline path has no `net::run_payer` to gate it, so the check lives here.
+   Then it calls `pay::sp_send` (`main.rs:47`).
+2. **Decode and validate the code.** `pay::sp_send` (`pay.rs:78`) enforces the
+   `SP_MIN_SATS` dust floor (`pay.rs:87`), decodes the code with `sp::decode`
+   (`pay.rs:94`, in `sp.rs:77`) into `(scan, spend, network)`, and rejects a
+   network mismatch before any money moves (`pay.rs:95-101`).
+3. **Gather spendable inputs.** `led.sp_utxos()` (`pay.rs:105`, fold at
+   `ledger.rs:438`) returns already-earned, fully-confirmed silent-payment outputs,
+   and `wallet.sp_spend_keypair` (`pay.rs:106`) yields the key that redeems them.
+   This is what makes SP income re-spendable: an agent pays an sp code with what it
+   earned via silent payments, not only with descriptor UTXOs.
+4. **Derive the one-time address and sign.** `chain::build_signed_to_sp`
+   (`pay.rs:107`, in `chain.rs:121`) fails closed on uncapped mainnet
+   (`chain.rs:131`), syncs (`chain.rs:135-137`), builds BIP-352 `SpInput`s from the
+   SP UTXOs and descriptor UTXOs (`chain.rs:148-183`), computes the receiver's
+   one-time Taproot address with `sp::send_address` (`chain.rs:184`, in `sp.rs:125`)
+   over that exact input set, builds the tx with those inputs manually selected
+   (`chain.rs:186-203`), enforces the fee cap (`chain.rs:205-210`), and signs:
+   descriptor inputs by bdk, the SP inputs key-path Schnorr-signed by hand in
+   `finalize_mixed_psbt` (`chain.rs:220-221`). It returns the tx, fee, derived
+   address, and the SP outpoints it consumed.
+5. **Belt-and-suspenders address gate.** Back in `pay::sp_send`, the derived
+   one-time address is run through `check_address` (`pay.rs:109`). The sp code was
+   already blocklist-checked; a one-time output cannot be pre-listed, so this
+   catches the rare case where the derived address happens to match a blocked one.
+6. **Record, broadcast, mark spent.** Same ordering as the live path:
+   `write_sidecar` (`pay.rs:113`) → `append(Entry::Sent{… Pending})`
+   (`pay.rs:114`) → `chain::broadcast` (`pay.rs:123`). Then, for each SP outpoint
+   it just consumed, `led.record_sp_spent` (`pay.rs:125-127`, at `ledger.rs:368`)
+   books an `SpSpent` so the balance fold stops counting it.
 
-> **Honest gap.** Today `reconcile` confirms the txid is buried but does not yet verify
-> that the transaction pays B's *issued address* for the *claimed amount*, so a lying
-> `Notify` can record a phantom credit. Verifying the on-chain output inside `reconcile`
-> is the top correctness fix (also noted in the README).
+There is no tunnel, no `AddrRequest`/`AddrResponse`, and no `Notify`. The payee
+learns it was paid only by scanning the chain (below).
 
-## Why `cm receive` must be running first
+## Receiver path
 
-`cm pay` is the initiator and `cm receive` is the responder: the responder must already
-be listening for the initiator to connect, and the receiver mints the destination address
-*live* during the exchange — the sender has nowhere to send until it gets one. This is a
-property of the **interactive coordination**, not of Bitcoin.
+### 3a. Live path — `serve::run` → `net::run_receiver`
 
-If you already know a static address out of band, `cm send <addr> <sats>` broadcasts
-on-chain with no tunnel and no daemon — the receiver can be offline and check `cm balance`
-later. That path skips address rotation, the `Notify` hint, and auto-reconcile.
+`serve::run` (`serve.rs:56`) is the resident seller. It takes the wallet's
+exclusive lock (`serve.rs:65`), opens the signed ledger once (`serve.rs:68`), binds
+one UDP socket (`serve.rs:69`), and loops (`serve.rs:92`) over three duties:
+REPUBLISH the DHT card (`serve.rs:94`, `republish` at `serve.rs:144`, which
+advertises the sp code at `serve.rs:145`), WATCH the chain (`serve.rs:100`), and
+ACCEPT tunnels (`serve.rs:112`).
 
-## Framing detail
+On ACCEPT, `FramedTunnel::accept_any` (`serve.rs:112`, at `tunnel.rs:252`) answers
+a WireGuard handshake and *learns the initiator's key from the handshake itself*
+(no CLI arg). It builds a `Receiver` (`serve.rs:115`) seeded with the next unused
+index and runs `net::run_receiver` (`serve.rs:116`). Inside `net::run_receiver`
+(`net.rs:27`), it loops on `wire.recv` (`net.rs:37`):
 
-Each `Message` is `serde_json`-encoded (`Message::encode`), wrapped in a minimal IPv4
-packet (WireGuard tunnels IP, so each frame rides inside one), encrypted by WireGuard's
-ChaCha20-Poly1305 (`WgCore::seal` → `encapsulate`), and sent as a UDP datagram. On the
-way in, `WgCore::process` decapsulates and `Message::decode` reassembles. The plaintext
-JSON never appears in the encrypted datagram — verified by a test in `tunnel.rs`.
+1. **`AddrRequest{sats}`** (`net.rs:39`): `rx.handle` (`net.rs:41`, at
+   `protocol.rs:74`) derives the next unused BIP-86 address via
+   `wallet.address(index)` (`protocol.rs:78`) and advances the index. The receiver
+   appends `AddressIssued{index}` to the ledger (`net.rs:43`) and replies with
+   `AddrResponse{address, index}` (`net.rs:47`). A fresh address per payment means
+   no reuse.
+2. **`Notify{txid, sats}`** (`net.rs:50`): treated as an *untrusted* hint. The
+   receiver does not credit the claimed amount. It calls `chain::deposits_to` on
+   the address it issued this session (`net.rs:62`, at `chain.rs:467`), finds the
+   deposit whose txid matches (`net.rs:63`), and books the **real on-chain amount**
+   with `led.record_received(&d.txid, d.sats, index)` (`net.rs:65`), then runs
+   `ledger::reconcile` (`net.rs:66`). If the tx is not yet visible, it records
+   nothing and lets the WATCH duty book it later. UDP has no close, so the function
+   returns after one Notify (`net.rs:90`) rather than blocking the next buyer.
+
+### 3b. Offline path — `serve` WATCH → `scan::scan_to_tip`
+
+A silent payment lands on a one-time address the descriptors cannot know, so there
+is nothing to poll for. The receiver must read the chain and run the BIP-352
+receive check. The WATCH duty, `chain_watch` (`serve.rs:161`), does this every
+tick:
+
+1. **Advance in-flight payments.** `ledger::reconcile` (`serve.rs:162`) first
+   (see the ladder below).
+2. **Poll issued addresses.** For each address handed out but not yet paid
+   (`led.issued_unpaid`), `chain::deposits_to` (`serve.rs:177`) plus
+   `led.record_received` (`serve.rs:182`) book any plain-address deposit that
+   arrived with no live session.
+3. **Scan for silent payments.** `scan_fresh` (`serve.rs:203`, at `serve.rs:222`)
+   opens a fresh ledger view and runs `scan::scan_to_tip` (`serve.rs:227`).
+
+`scan::scan_to_tip` (`scan.rs:74`) takes the process scan lock (`scan.rs:77`),
+loads the scan/spend keys (`scan.rs:79-80`), reads the tip height (`scan.rs:82`),
+and starts from the saved checkpoint or `tip - START_LOOKBACK` (`scan.rs:83-87`).
+It walks each block's transactions (`scan.rs:90-118`) and for every tx runs
+`tx_matches` (`scan.rs:102`, at `scan.rs:168`), which reconstructs the tx's input
+public keys with `input_pubkey` (`scan.rs:203`), extracts P2TR output keys with
+`taproot_output_key` (`scan.rs:239`), and runs the BIP-352 receive check
+`sp::receive_check` (`scan.rs:197`, at `sp.rs:146`). Each fresh match above the
+dust floor (`scan.rs:103`) is booked as a Pending `SpReceived` via
+`led.record_sp_received` (`scan.rs:107`, at `ledger.rs:342`), storing the ECDH
+tweak so the spend key is recoverable from seed plus ledger alone. After a fully
+successful pass it saves the checkpoint (`scan.rs:120`) and calls `track_spends`
+(`scan.rs:121`, at `scan.rs:251`) to mark any of our SP outputs the chain now shows
+spent.
+
+### 3c. The status ladder — `ledger::reconcile`
+
+Both receive shapes book a Pending entry and then advance it identically.
+`ledger::reconcile` (`ledger.rs:650`) folds the work queue `led.pending()`
+(`ledger.rs:505`) and, for each txid, asks the chain for its confirmation count
+with `chain::confirmations` (`ledger.rs:653`, at `chain.rs:581`). It maps the count
+to a status with `Status::from_confirmations` (`ledger.rs:675`, at `ledger.rs:48`):
+0 confs = **Pending**, 1-2 = **Soft**, 3+ = **Final**. If the status changed it
+appends a `StatusUpdate` (`ledger.rs:676-679`).
+
+Two recovery behaviors ride along in reconcile:
+
+- **Write-ahead rebroadcast.** A still-unconfirmed Sent that we hold a sidecar for
+  is re-pushed with `chain::rebroadcast_hex` (`ledger.rs:663-665`). A provably-dead
+  tx (inputs gone or conflicting) is marked `Failed` and un-debited
+  (`ledger.rs:666-672`); anything else stays Pending. Once a payment reaches 1+
+  confs its sidecar is removed (`ledger.rs:682-684`).
+- **Orphan sidecars.** A sidecar with no matching Sent entry (a crash in the gap
+  before the ledger append) is dropped, never rebroadcast blind
+  (`ledger.rs:687-706`).
+
+Once an `SpReceived` reaches Final, `led.sp_utxos` (`ledger.rs:438`) returns it as
+spendable, which feeds directly back into `pay::sp_send`'s input gathering. That is
+the loop that makes earned silent-payment income re-spendable.
+
+## Offline vs live, side by side
+
+| Step | Live (tunnel) path | Offline (sp-code) path |
+|---|---|---|
+| Peer resolution | `pubkey@host:port`, or a card with endpoints | `sp1…`/`tsp1…`, or a card carrying an sp code |
+| WireGuard tunnel | **yes** (`tunnel::pay` → `FramedTunnel::connect`) | **skipped** |
+| Address agreement | `AddrRequest`/`AddrResponse` over the tunnel (fresh BIP-86 address) | `sp::send_address` derives a one-time output offline (BIP-352) |
+| Payee must be online | yes | no |
+| Build/record/broadcast | `pay::send` → `chain::build_signed` | `pay::sp_send` → `chain::build_signed_to_sp` |
+| `Notify` hint | sent over the tunnel | none |
+| Receiver detection | `net::run_receiver` (Notify + on-chain verify) or WATCH poll | `scan::scan_to_tip` (chain scan) |
+| Confirmation ladder | `ledger::reconcile` (identical) | `ledger::reconcile` (identical) |
+
+The offline path skips exactly the WireGuard tunnel and the interactive
+address request. Everything to the right of "agree on the destination address" is
+the same build → record → broadcast → reconcile machinery.
+
+## Framing detail (live path)
+
+Each `Message` is `serde_json`-encoded as a length-prefixed frame
+(`Message::encode`, `protocol.rs:33`), wrapped in a minimal IPv4 packet
+(`wrap_ip`, `tunnel.rs:128` — WireGuard tunnels IP, so each frame rides inside
+one), encrypted by WireGuard's ChaCha20-Poly1305 (`WgCore::seal` →
+`encapsulate`, `tunnel.rs:114`), and sent as a UDP datagram. Inbound,
+`WgCore::process` (`tunnel.rs:102`) decapsulates and `Message::decode`
+(`protocol.rs:45`) reassembles. The plaintext JSON never appears in the encrypted
+datagram, verified by a test in `tunnel.rs`.
 
 ## The split, in one line
 
-**WireGuard moves messages; Bitcoin L1 moves money; `cm` is the bridge.** The tunnel
-carries `AddrRequest` / `AddrResponse` / `Notify` and nothing of value; the coins move
-over the Bitcoin network and are confirmed by the chain. The payment protocol in `net.rs`
-does not know which transport carries its bytes — swap the tunnel for the TCP stand-in in
-the tests and the logic above does not move.
+**WireGuard moves messages; Bitcoin L1 moves money; `cm` is the bridge.** The
+tunnel carries `AddrRequest` / `AddrResponse` / `Notify` and nothing of value; the
+coins move over the Bitcoin network and are confirmed by the chain. The payment
+logic in `net.rs` does not know which transport carries its bytes: swap the tunnel
+for the TCP stand-in in the tests and the logic above does not move. The offline
+silent-payment path removes the transport entirely and lets the chain itself be the
+channel.
 
 
+======================================================================
+# Reference  (docs/reference.md)
+======================================================================
 
-========================================================================
+
+# Reference
+
+Technical reference for `computermoney` (binary `cm`), a self-custodial Bitcoin L1
+(mainnet) wallet each AI agent runs itself. Pipeline: DISCOVER on the BitTorrent
+Mainline DHT (a peer IS its card key, a 32-byte ed25519 public key) -> TALK over a
+WireGuard tunnel (messages only, never coins) -> SETTLE on Bitcoin L1 (one Taproot
+transaction per payment, Silent Payments BIP-352, confirmation ladder
+0=Pending / 1-2=Soft / 3+=Final). It also sells and buys data over HTTP 402.
+`cm mcp` exposes it to AI agents as plain-language tools; the seed never crosses
+the tool boundary.
+
+Everything below is derived from the source under `src/`. Line citations are
+`file.rs:line`. See also [payment-flow.md](payment-flow.md) and
+[mcp-usage.md](mcp-usage.md).
+
+License AGPL v3, Copyright (C) 2026 Ebsilon, Inc. (per `LICENSE` and `README.md`;
+note `Cargo.toml` still declares `license = "MIT"`, which is stale).
+
+---
+
+## 1. Module map
+
+17 modules, all declared in `main.rs:6-21`.
+
+| Module | Responsibility |
+| --- | --- |
+| `main.rs` | CLI entry point: parse `args`, dispatch each subcommand, print human output. |
+| `wallet.rs` | Seed to keys. One BIP-39 mnemonic derives Taproot receive addrs (BIP-86), descriptors, the ledger-signing key, the BIP-352 SP scan/spend keys, and the WireGuard/card identity. No chain state. |
+| `discover.rs` | DISCOVER layer. Publish/resolve a signed BEP-44 mutable `Card` on the Mainline DHT, keyed by the ed25519 card public key. |
+| `sp.rs` | BIP-352 Silent Payments math and code encode/decode. Pure, I/O-free: derive a send address from inputs, scan a tx for payments to us, reconstruct the spend key. |
+| `chain.rs` | Read/write Bitcoin via bdk + esplora. Balance, build+sign (plain / SP-send / SP-spending), broadcast, deposit history, confirmations, rebroadcast, feerate. |
+| `ledger.rs` | Append-only signed log (the source of truth). Every economic fact is one Schnorr-signed JSON line; balance / pending / SP folds and `reconcile` read it. Also owns the signed-tx sidecar files. |
+| `pay.rs` | The ordering-critical send path: build+sign -> write sidecar -> append durable Pending `Sent` -> broadcast. Shared by every send path (crash-safety in one place). |
+| `policy.rs` | The gate every outgoing payment passes: per-payment / daily / fee caps, address blocklist, and the mainnet fail-closed guard. |
+| `protocol.rs` | The only structured messages that cross the tunnel (length-prefixed JSON): `AddrRequest`/`AddrResponse`/`Notify`/`Chat`, plus the receive-side `Receiver`. |
+| `net.rs` | Transport-agnostic payment protocol behind a `Wire` seam: `run_receiver` (issue addr, verify on-chain, record) and `run_payer` (ask, settle, notify). |
+| `tunnel.rs` | Real WireGuard tunnel (boringtun Noise_IK) keyed by the wallet seed. `FramedTunnel` carries payment frames over UDP; implements `Wire`. |
+| `serve.rs` | The resident seller daemon: one single-threaded loop that REPUBLISHes the card, WATCHes the chain, and ACCEPTs buyer tunnels. |
+| `scan.rs` | BIP-352 Silent Payments chain scanner. Walk blocks from a checkpoint to tip via esplora JSON, reconstruct input keys, book SP income, track spends. |
+| `paywall.rs` | Minimal HTTP 402 seller endpoint: serve one body for a fixed price, answer unpaid GETs with JSON `Terms`, verify a claimed txid pays us. |
+| `fetch.rs` | Buyer-side auto-pay for HTTP 402: GET a URL, pay a cm 402's SP code within a cap, retry with the txid as proof. |
+| `storage.rs` | Encrypted seed at rest (Argon2id + ChaCha20-Poly1305), config-dir layout, identity selection, wallet lock, and network/esplora/explorer config. |
+| `mcp.rs` | Stdio JSON-RPC 2.0 MCP server exposing 11 plain-language tools to AI agents; reuses the exact CLI recipes. The seed is never a tool argument. |
+
+---
+
+## 2. Key data structures
+
+### Wallet and identity
+
+**`Wallet`** — `wallet.rs:24`. The agent's whole identity, one master key.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `root` | `Xpriv` | BIP-32 master key derived from the mnemonic seed. |
+| `network` | `Network` | Active Bitcoin network (drives coin type and HRP). |
+
+Derivation branches off `m/86'/{coin}'/0'/…`: receive `0/n`, change `1/*`,
+ledger-signing `2/0`, network identity (WireGuard + card) `3/0`. SP keys use a
+separate `m/352'/{coin}'/0'/…` account (scan `1'/0`, spend `0'/0`).
+
+### DHT card
+
+**`discover::Card`** — `discover.rs:43`. The signed business card put to the DHT.
+Serialized JSON must fit the BEP-44 1000-byte cap (`MAX_CARD_BYTES`, `discover.rs:30`).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `wg` | `String` | 64-hex x25519 WireGuard public key (the tunnel identity), always present. |
+| `ep` | `Vec<String>` | Optional dial endpoints, each `"host:port"` (or `"[v6]:port"`); empty for a dial-out-only buyer (skipped on the wire). |
+| `sp` | `Option<String>` | The agent's silent-payment code (`sp1…`/`tsp1…`), when published. Optional so v1 cards still parse. |
+| `at` | `u64` | Publication time (unix seconds); doubles as the record's monotonic `seq`. |
+
+The card is addressed by the ed25519 card public key (`card_pubkey_bytes`,
+`discover.rs:61`), derived from the wallet's branch-3 network-identity seed.
+
+### Confirmation status
+
+**`ledger::Status`** — `ledger.rs:37` (enum). The confirmation ladder.
+
+| Variant | Meaning |
+| --- | --- |
+| `Pending` | 0 confirmations. |
+| `Soft` | 1-2 confirmations (receipt ack). |
+| `Final` | 3+ confirmations (delivery gate; spendable). |
+| `Failed` | Off the ladder: set only by `reconcile` when a Sent tx is proven dead. A Failed send is never debited. |
+
+`Status::from_confirmations` (`ledger.rs:48`) maps a count to Pending/Soft/Final;
+it never returns `Failed`.
+
+### Ledger entries
+
+**`ledger::Entry`** — `ledger.rs:62` (enum, `#[serde(tag = "kind")]`). One economic
+fact per line. `seq` is monotonic across all variants.
+
+| Variant | Fields | Meaning |
+| --- | --- | --- |
+| `AddressIssued` | `seq, index` | A receive address at `index` was handed to a counterparty. |
+| `Sent` | `seq, txid, sats, to, status, at` | We broadcast a payment; `at` is send time (feeds the daily fold), `to` records intent. |
+| `Received` | `seq, txid, sats, index, status` | A payment to one of our issued addresses was observed. |
+| `StatusUpdate` | `seq, txid, status` | `reconcile` advanced a payment's status (append-only; latest wins). |
+| `SpReceived` | `seq, txid, vout, sats, tweak, status` | A silent-payment output paying us, found by scanning; `tweak` is the hex ECDH tweak `t_k` so the spend key `d = b_spend + t_k` is recoverable. |
+| `SpSpent` | `seq, txid, vout` | An SP outpoint we held was spent (set-semantic, idempotent). |
+
+Each on-disk line is a **`Record`** envelope (`ledger.rs:140`, private):
+`{ entry: Entry, sig: String }`, where `sig` is a BIP-340 Schnorr signature by the
+wallet's identity key over the SHA-256 of the entry's canonical JSON.
+
+**`ledger::Ledger`** — `ledger.rs:146`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `path` | `PathBuf` | The `ledger.jsonl` file. |
+| `entries` | `Vec<Entry>` | In-memory fold source, loaded (and verified) on open. |
+| `identity` | `Option<Keypair>` | Signing key; `None` = unsigned ledger (tests). |
+
+Supporting read types: **`Collection`** (`ledger.rs:97`: `index, txid, sats, sp`)
+and **`SpUtxo`** (`ledger.rs:108`: `txid, vout, sats, tweak`).
+
+### Spend policy
+
+**`policy::Policy`** — `policy.rs:28`. Loaded from `policy.json`; every field optional
+(missing = that limit is off).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `max_payment_sats` | `Option<u64>` | Largest single payment. |
+| `daily_limit_sats` | `Option<u64>` | Largest total spend in the last `DAILY_WINDOW_SECS` (86400, `policy.rs:24`). |
+| `max_fee_sats` | `Option<u64>` | Largest acceptable transaction fee. |
+| `blocked_addresses` | `HashSet<String>` | Addresses / payee handles this wallet must never pay. |
+
+**`policy::PolicyError`** — `policy.rs:42` (enum): `PaymentTooLarge`,
+`DailyLimitExceeded`, `FeeTooHigh`, `AddressBlocked`, `MainnetUncapped`,
+`MainnetNoFeeCap`.
+
+### HTTP 402 terms
+
+**`paywall::Terms`** — `paywall.rs:35`. The 402 body (shared with `fetch`).
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `cm402` | `u8` | Version tag (always 1). |
+| `sats` | `u64` | Price for one GET of the body. |
+| `pay_to` | `String` | The seller's static SP code (`sp1…`/`tsp1…`). |
+| `network` | `String` | Network label so the buyer can refuse cross-network. |
+
+### Tunnel protocol messages
+
+**`protocol::Message`** — `protocol.rs:18` (enum, `#[serde(tag = "type")]`).
+Length-prefixed JSON (4-byte big-endian length + body).
+
+| Variant | Fields | Meaning |
+| --- | --- | --- |
+| `AddrRequest` | `sats` | "I want to pay you `sats`. Give me an address." |
+| `AddrResponse` | `address, index` | "Pay this address." `index` is the RBF-stable payment identifier. |
+| `Notify` | `txid, sats` | "I broadcast the payment." A fast-path hint, not the source of truth. |
+| `Chat` | `text` | Free-form coordination (the chat lane). |
+
+**`protocol::Receiver`** — `protocol.rs:63`: `wallet: &Wallet`, `next_index: u32`.
+
+### Silent-payment math types
+
+- **`sp::SpInput`** (`sp.rs:32`): `outpoint: OutPoint`, `key: SecretKey` (a sender input, spend key even-Y normalized for Taproot).
+- **`sp::TxInputs`** (`sp.rs:41`): `pubkeys: Vec<PublicKey>`, `smallest_outpoint: OutPoint` (the receiver's view of a tx's inputs).
+- **`sp::SpFound`** (`sp.rs:49`): `vout: u32`, `sats: u64`, `tweak: [u8;32]` (a matched payment to us).
+
+### Chain / scan / fetch result types
+
+- **`chain::Balance`** (`chain.rs:26`): `confirmed: u64`, `pending: u64`.
+- **`chain::Deposit`** (`chain.rs:457`): `txid: String`, `sats: u64`, `confirmations: u32`.
+- **`chain::Rebroadcast`** (`chain.rs:498`, enum): `Accepted`, `Rejected(String)`.
+- **`scan::ScanReport`** (`scan.rs:55`): `from_height: u32`, `to_height: u32`, `found: Vec<Found>`.
+- **`scan::Found`** (`scan.rs:63`): `txid: String`, `vout: u32`, `sats: u64`.
+- **`fetch::FetchOut`** (`fetch.rs:40`): `status: u16`, `body: String`, `paid: Option<(String, u64)>` (txid, sats).
+- **`tunnel::FramedTunnel`** (`tunnel.rs:150`): `core: WgCore`, `sock: UdpSocket`, `peer: SocketAddr`.
+
+### MCP request/response
+
+No typed struct: `mcp.rs` builds JSON-RPC 2.0 frames as `serde_json::Value`.
+Framing helpers (`mcp.rs:1064-1088`): `result_frame(id, result)`,
+`error_frame(id, code, message)`, `tool_ok(id, text)`, `tool_err(id, text)`.
+A `tools/call` result carries `{ "content": [{ "type": "text", "text": … }],
+"isError": bool }`. Protocol version `2025-06-18` (`mcp.rs:47`).
+
+---
+
+## 3. Key functions
+
+### wallet.rs — identity and key derivation
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `Wallet::generate() -> Result<(Self, String), Error>` | Fresh 12-word wallet on the active network; returns wallet + mnemonic. | `wallet.rs:32` |
+| `Wallet::from_mnemonic(phrase: &str) -> Result<Self, Error>` | Restore from a mnemonic on the active network. | `wallet.rs:41` |
+| `Wallet::address(&self, index: u32) -> Result<Address, Error>` | BIP-86 Taproot receive address at `index`. | `wallet.rs:63` |
+| `Wallet::descriptors(&self) -> (String, String)` | (external, internal) BIP-86 descriptors for the bdk chain layer. | `wallet.rs:76` |
+| `Wallet::signing_keypair(&self) -> Result<Keypair, Error>` | Ledger-signing identity key (branch `2/0`). | `wallet.rs:87` |
+| `Wallet::sp_scan_keypair(&self) -> Result<Keypair, Error>` | BIP-352 SP scan key (`m/352'/…/1'/0`). | `wallet.rs:104` |
+| `Wallet::sp_spend_keypair(&self) -> Result<Keypair, Error>` | BIP-352 SP spend key (`m/352'/…/0'/0`). | `wallet.rs:114` |
+| `Wallet::sp_code(&self) -> Result<String, Error>` | This agent's static `sp1…`/`tsp1…` code. | `wallet.rs:123` |
+| `Wallet::id_hex(&self) -> Result<String, Error>` | 64-hex WireGuard public key (`cm id`, wallet dir name). | `wallet.rs:132` |
+| `Wallet::wg_secret_bytes(&self) -> Result<Zeroizing<[u8;32]>, Error>` | Branch-3 network-identity secret (WG + card seed). | `wallet.rs:152` |
+
+### discover.rs — DHT card publish / resolve
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `card_pubkey_hex(card_secret: &[u8;32]) -> String` | Card public key as 64-hex (the shareable discovery identity). | `discover.rs:66` |
+| `parse_card_key(hex: &str) -> Result<[u8;32], Box<dyn Error>>` | Parse a 64-hex card key to 32 bytes. | `discover.rs:76` |
+| `publish(card_secret: &[u8;32], card: &Card) -> Result<(), Box<dyn Error>>` | Sign + put the card to the DHT (`seq = card.at`). | `discover.rs:93` |
+| `resolve(card_pubkey: &[u8;32]) -> Result<Option<Card>, Box<dyn Error>>` | Resolve a peer's card by public key (retries `RESOLVE_ATTEMPTS`). | `discover.rs:120` |
+
+### sp.rs — BIP-352 Silent Payments
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `encode(scan: &PublicKey, spend: &PublicKey, network: Network) -> String` | Encode an `sp1…`/`tsp1…` code. | `sp.rs:59` |
+| `decode(code: &str) -> Result<(PublicKey, PublicKey, Network), Error>` | Decode a code to (scan, spend, network). | `sp.rs:77` |
+| `send_address(inputs, scan, spend, network) -> Result<Address, Error>` | Derive the receiver's one-time Taproot output address from the sender's inputs. | `sp.rs:125` |
+| `receive_check(inputs, outputs, scan_sk, spend_pk) -> Vec<SpFound>` | Scan one tx's outputs for payments to us; recover each tweak. Never errors. | `sp.rs:146` |
+| `spend_keypair(spend_sk: &SecretKey, tweak: &[u8;32]) -> Result<Keypair, Error>` | Reconstruct a found payment's spend key `d = b_spend + t_k`. | `sp.rs:157` |
+| `taproot_input_key(sk: SecretKey) -> SecretKey` | Normalize a Taproot input key to even Y (sender side). | `sp.rs:103` |
+
+### chain.rs — Bitcoin read/write (bdk + esplora)
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `balance(ext_desc, int_desc) -> Result<Balance, Box<dyn Error>>` | Full-scan the descriptors and return confirmed + pending. | `chain.rs:40` |
+| `build_signed(ext, int, to_addr, sats, max_fee_sats) -> Result<(Transaction, u64), _>` | Build+sign a P2TR payment (no broadcast); enforces the fee cap and mainnet guard. | `chain.rs:63` |
+| `build_signed_to_sp(ext, int, scan, spend, sats, max_fee_sats, sp_utxos, sp_spend_sk) -> Result<(Transaction, u64, Address, Vec<OutPoint>), _>` | Build+sign a Silent Payments send (inputs pinned before the one-time addr). | `chain.rs:121` |
+| `build_signed_spending_sp(ext, int, to_addr, sats, max_fee_sats, sp_utxos, sp_spend_sk) -> Result<(Transaction, u64, Vec<OutPoint>), _>` | Build+sign a normal send that may draw on received SP outputs. | `chain.rs:236` |
+| `broadcast(tx: &Transaction) -> Result<Txid, _>` | Broadcast a signed tx (the only money-moving step). | `chain.rs:447` |
+| `deposits_to(addr: &str) -> Result<Vec<Deposit>, _>` | Every deposit paying `addr`, newest first (stateless esplora read). | `chain.rs:467` |
+| `rebroadcast_hex(hex: &str) -> Result<Rebroadcast, _>` | Rebroadcast a sidecar tx; classify Accepted vs provably-dead Rejected. | `chain.rs:513` |
+| `confirmations(txid_str: &str) -> Result<u32, _>` | Confirmation count for a txid (0 if unconfirmed). | `chain.rs:581` |
+
+### ledger.rs — signed append-only log
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `Status::from_confirmations(confs: u32) -> Status` | Map a confirmation count to Pending/Soft/Final. | `ledger.rs:48` |
+| `Ledger::open(path) -> io::Result<Self>` | Open an unsigned ledger (tests / keyless callers). | `ledger.rs:156` |
+| `Ledger::open_with_identity(path, identity: Keypair) -> io::Result<Self>` | Open a signed ledger; verify every line on load. | `ledger.rs:164` |
+| `Ledger::append(&mut self, entry: Entry) -> io::Result<()>` | Sign, serialize, write, fsync one entry. | `ledger.rs:206` |
+| `Ledger::balance(&self) -> u64` | Final received minus everything sent (Failed not debited). | `ledger.rs:481` |
+| `Ledger::pending(&self) -> Vec<String>` | The work queue: in-flight txids (not yet Final/Failed). | `ledger.rs:505` |
+| `Ledger::spent_since(&self, cutoff: u64) -> u64` | Total sats sent at/after `cutoff` (daily-limit fold). | `ledger.rs:530` |
+| `Ledger::sp_balance(&self) -> u64` | Spendable SP balance (final, unspent). | `ledger.rs:398` |
+| `Ledger::sp_incoming(&self) -> u64` | SP income booked but not yet final. | `ledger.rs:419` |
+| `Ledger::sp_utxos(&self) -> Vec<SpUtxo>` | Unspent, final SP outputs with tweaks (spend candidates). | `ledger.rs:438` |
+| `Ledger::record_received(&mut self, txid, sats, index) -> io::Result<bool>` | Book a chain-detected deposit as Pending Received (dedup). | `ledger.rs:322` |
+| `Ledger::record_sp_received(&mut self, txid, vout, sats, tweak) -> io::Result<bool>` | Book a scanned SP output as Pending SpReceived (dedup). | `ledger.rs:342` |
+| `Ledger::record_sp_spent(&mut self, txid, vout) -> io::Result<bool>` | Mark an SP outpoint spent (idempotent). | `ledger.rs:368` |
+| `Ledger::next_address_index(&self) -> u32` | Next receive index (survives restart). | `ledger.rs:230` |
+| `Ledger::write_sidecar / read_sidecar / remove_sidecar / list_sidecars` | Manage `pending/<txid>.tx` write-ahead signed-tx files. | `ledger.rs:568-616` |
+| `reconcile(ledger: &mut Ledger) -> Result<usize, Box<dyn Error>>` | For each pending payment, re-check the chain, rebroadcast/advance/fail; drop orphan sidecars. | `ledger.rs:650` |
+
+### pay.rs — ordered send path (build -> record -> broadcast)
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `send(led, ext, int, to, sats, max_fee_sats) -> Result<String, _>` | Plain-address send; returns the txid. | `pay.rs:33` |
+| `sp_send(led, wallet, ext, int, code, sats, max_fee_sats) -> Result<String, _>` | Pay an SP code on-chain (no tunnel; payee may be offline). Enforces `SP_MIN_SATS` (330, `pay.rs:27`). | `pay.rs:78` |
+| `send_spending_sp(led, wallet, ext, int, to, sats, max_fee_sats) -> Result<String, _>` | Send to a normal address, drawing on received SP outputs too. | `pay.rs:137` |
+
+### policy.rs — spend gate
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `Policy::load() -> Result<Policy, _>` | Load `policy.json` (or permissive default). | `policy.rs:108` |
+| `Policy::check_amount(&self, sats, spent_recent) -> Result<(), PolicyError>` | Per-payment + daily caps (before contacting the peer). | `policy.rs:119` |
+| `Policy::check_address(&self, to) -> Result<(), PolicyError>` | Blocklist check once the destination is known. | `policy.rs:134` |
+| `Policy::check_fee(&self, fee) -> Result<(), PolicyError>` | Fee cap once the tx is built. | `policy.rs:142` |
+| `ensure_mainnet_capped(network, policy) -> Result<(), PolicyError>` | Mainnet fail-closed guard: require a spend cap AND a fee cap. Called inside every `chain::build_signed*`. | `policy.rs:93` |
+
+### net.rs — transport-agnostic protocol
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `trait Wire { send; recv }` | Bidirectional message-framed channel (implemented by `FramedTunnel` and the test TCP wire). | `net.rs:18` |
+| `run_receiver<W: Wire>(wire, rx, led) -> Result<(), _>` | Issue a fresh address, verify a Notify on-chain, book the real amount. | `net.rs:27` |
+| `run_payer<W: Wire>(wire, ext, int, led, sats) -> Result<(), _>` | Gate policy, ask for an address, settle via `pay::send`, notify. | `net.rs:102` |
+
+### tunnel.rs — WireGuard transport
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `identity(wallet) -> Result<(StaticSecret, PublicKey), _>` | The agent's WG static identity from the seed. | `tunnel.rs:48` |
+| `parse_public_key(hex: &str) -> Result<PublicKey, _>` | Parse a peer's 64-hex WG public key. | `tunnel.rs:55` |
+| `FramedTunnel::connect(sock, peer, secret, peer_pub) -> Result<Self, _>` | Initiator: open + handshake a tunnel to a known peer. | `tunnel.rs:159` |
+| `FramedTunnel::accept_any(wallet, socket) -> Result<Option<(FramedTunnel, String)>, _>` | Responder on a shared socket: learn the dialer's key from the handshake. | `tunnel.rs:252` |
+| `pay(wallet, ledger_path, peer_addr, peer_pub_hex, sats) -> Result<(), _>` | Dial a seller over WireGuard and run `net::run_payer`. | `tunnel.rs:351` |
+
+### serve.rs / scan.rs / paywall.rs / fetch.rs
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `serve::run(wallet, ledger_path, bind, eps) -> Result<(), _>` | Resident seller daemon loop (republish / watch / accept). Never returns on its own. | `serve.rs:56` |
+| `scan::scan_to_tip(wallet, led) -> Result<ScanReport, _>` | Scan blocks from checkpoint to tip, book SP income, track spends. | `scan.rs:74` |
+| `scan::tx_pays_me(wallet, txid) -> Result<u64, _>` | Sats one tx pays us (no persistence); the paywall's verifier. | `scan.rs:128` |
+| `scan::anchor_birth(wallet)` | Pin a fresh wallet's first scan to the current tip. | `scan.rs:144` |
+| `paywall::run(listener, price_sats, body, wallet) -> Result<(), _>` | Serve one body for a fixed price over HTTP 402 (blocking, single-threaded). | `paywall.rs:52` |
+| `fetch::fetch(wallet, led, url, max_sats) -> Result<FetchOut, _>` | GET a URL, auto-pay a cm 402 within `max_sats`, retry with the txid. | `fetch.rs:49` |
+
+### storage.rs — seed at rest, config, identity
+
+| Signature | Purpose | Loc |
+| --- | --- | --- |
+| `load_wallet() -> Result<Wallet, _>` | Resolve the acting identity and unlock it (`CM_MNEMONIC` > `seed.enc` > plaintext `mnemonic`). | `storage.rs:292` |
+| `save_new_wallet(wallet, phrase, passphrase: Option<&str>) -> Result<PathBuf, _>` | Persist a new wallet (sealed `seed.enc` or 0600 `mnemonic`); set the `default` marker. | `storage.rs:202` |
+| `save_encrypted / load_encrypted` | Argon2id + ChaCha20-Poly1305 seal / open of the mnemonic. | `storage.rs:31 / 53` |
+| `wallet_dir(wallet) / ledger_path(wallet)` | `<root>/<id8>/` and its `ledger.jsonl`. | `storage.rs:181 / 190` |
+| `wallet_ids() -> Vec<String>` | The 8-hex identity subdirectories on this machine. | `storage.rs:122` |
+| `lock_dir(dir) -> Result<File, _>` | Exclusive non-blocking wallet lock (single writer). | `storage.rs:105` |
+| `network() / network_label() / esplora_endpoint() / explorer_tx_url(txid)` | Active network + endpoints from env / defaults. | `storage.rs:239 / 253 / 264 / 279` |
+
+### mcp.rs — MCP server and tool handlers
+
+`run()` (`mcp.rs:55`) is the stdio JSON-RPC loop; `dispatch` (`mcp.rs:110`) routes
+`initialize` / `ping` / `tools/list` / `tools/call`. Each tool reuses the CLI recipe:
+
+| Tool | Handler | Loc |
+| --- | --- | --- |
+| `cm_setup` | `call_setup` -> `setup_report` | `mcp.rs:432 / 439` |
+| `cm_pay` | `call_pay` -> `pay_peer` / `sp_pay` | `mcp.rs:843 / 876 / 942` |
+| `cm_send` | `call_send` -> `send_payment` | `mcp.rs:734 / 758` |
+| `cm_fetch` | `call_fetch` -> `fetch_report` | `mcp.rs:616 / 633` |
+| `cm_paywall` | `call_paywall` (background thread) | `mcp.rs:651` |
+| `cm_serve` | `call_serve` (background thread) | `mcp.rs:534` |
+| `cm_balance` | `call_balance` -> `balance_report` | `mcp.rs:779 / 786` |
+| `cm_collections` | `call_collections` -> `collections_report` | `mcp.rs:991 / 998` |
+| `cm_confs` | `call_confs` -> `confs_report` | `mcp.rs:957 / 974` |
+| `cm_id` | `call_id` | `mcp.rs:507` |
+| `cm_address` | `call_address` | `mcp.rs:522` |
+
+`cm_serve` and `cm_paywall` are one-per-session, guarded by the `SERVING` /
+`PAYWALL` atomics (`mcp.rs:38 / 42`). See [mcp-usage.md](mcp-usage.md).
+
+---
+
+## 4. CLI commands
+
+From `main.rs` (dispatch in `run`, `main.rs:50`). Unknown/no subcommand prints the
+help banner and exits 2.
+
+| Command | Args | Purpose | Loc |
+| --- | --- | --- | --- |
+| `cm setup` | none | Create a wallet if none exists, then print network, card key, funding address, balance, and how to transact. | `main.rs:53` |
+| `cm balance` | none | On-chain balance plus scanned silent-payment income (+ not-yet-spendable incoming). | `main.rs:104` |
+| `cm id` | none | Print the card key and the static sp code. | `main.rs:145` |
+| `cm publish` | `[host:port …]` | Sign + put the card to the DHT with zero or more endpoints. | `main.rs:153` |
+| `cm serve` | `[--bind addr] [--ep host:port]…` | Resident seller daemon (republish, watch chain, accept tunnels). `--ep` repeatable; default bind `0.0.0.0:51820`. | `main.rs:179` |
+| `cm pay` | `<sp-code \| card-key \| pubkey@host:port> <sats>` | Pay: SP code on-chain, card key via DHT (sp code or tunnel), or a direct endpoint. | `main.rs:204` |
+| `cm fetch` | `<url> [--max-sats N]` | GET a URL, auto-paying a cm HTTP 402 (default cap 10000 sats). | `main.rs:259` |
+| `cm paywall` | `<price_sats> [--port N] [--body S]` | Sell one body over HTTP 402 (blocking). Default port 8402. | `main.rs:286` |
+| `cm confs` | `<txid>` | Confirmation count + status (pending/soft/final/failed); stateless. | `main.rs:313` |
+| `cm mcp` | none | Run the stdio MCP server (11 tools). | `main.rs:328` |
+
+---
+
+## 5. Environment variables
+
+Every `CM_*` (and `HOME`) the code reads. All are optional except where noted.
+
+| Variable | Meaning | Read at |
+| --- | --- | --- |
+| `CM_NETWORK` | Active network: `mainnet` (default) \| `testnet` \| `signet`. | `storage.rs:240` |
+| `CM_PASSPHRASE` | Passphrase that seals / unlocks the encrypted seed. **Required on mainnet** (`cm setup` refuses without it; `seed.enc` cannot unlock without it). | `main.rs:61`, `storage.rs:303`, `mcp.rs:443` |
+| `CM_HOME` | Absolute path overriding the config root (run several agents on one machine). | `storage.rs:88` |
+| `CM_ID` | Identity prefix selecting which wallet to act as when several exist. | `storage.rs:297` |
+| `CM_MNEMONIC` | Explicit plaintext-mnemonic escape hatch; wins over the on-disk wallet. | `storage.rs:293` |
+| `CM_ESPLORA` | Esplora endpoint override (else a per-network public default). | `storage.rs:265` |
+| `CM_POLICY` | Path to `policy.json` (else `<root>/policy.json`). **Effectively required on mainnet**, since the fail-closed guard needs a spend cap + fee cap. | `policy.rs:109` (via `config_path`, `storage.rs:230`) |
+| `HOME` | Base of the default config root when `CM_HOME` is unset. | `storage.rs:94` |
+
+Mainnet fail-closed summary: a mainnet send needs `CM_PASSPHRASE` (to unlock the
+sealed seed) plus a `policy.json` (via `CM_POLICY` or the default path) that sets a
+spend cap and a fee cap; otherwise `ensure_mainnet_capped` (`policy.rs:93`) refuses
+before any money moves.
+
+---
+
+## 6. On-disk layout
+
+Config root (`config_root`, `storage.rs:85`): `CM_HOME` if set, else
+`~/.config/computermoney/`.
+
+```
+<root>/
+  default                 marker naming the identity used when CM_ID is unset
+  policy.json             spend policy (or CM_POLICY path)
+  <id8>/                  one directory per identity (first 8 hex of cm id)
+    seed.enc              sealed mnemonic (salt || nonce || ciphertext), when a passphrase is set
+    mnemonic              plaintext mnemonic, 0600 (test networks only; refused on mainnet)
+    ledger.jsonl          append-only signed economic log (the source of truth)
+    scan.json             highest fully-scanned block height (SP scan checkpoint)
+    lock                  exclusive single-writer lock file
+    pending/
+      <txid>.tx           write-ahead raw consensus hex of a broadcast-pending tx (sidecar)
+```
+
+- Identity directory name = first 8 hex chars of `cm id` (`wallet_dir`, `storage.rs:181`); depends on coin type, so mainnet and test wallets land in different dirs.
+- Ledger path (`ledger_path`, `storage.rs:190`) and SP checkpoint (`checkpoint_path`, `scan.rs:264`) both sit inside `<id8>/`.
+- The sidecar dir is `pending/` beside the ledger (`sidecar_dir`, `ledger.rs:554`).
+- Ledger lines are identity-signed; `open_with_identity` refuses foreign or tampered lines, so two identities never share a file.
+
+
+======================================================================
 # MCP usage  (docs/mcp-usage.md)
-========================================================================
+======================================================================
+
+
+# MCP usage
 
 Drive the whole wallet in plain language. `cm mcp` runs the same `cm` binary as a
 [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an MCP
 client (Claude Code, Claude Desktop, your own agent) calls tools instead of you typing
-`cm`. The seed and passphrase are never tool arguments — the wallet unlocks once at startup
-and is held for the process lifetime.
+`cm`. The wallet unlocks once at startup (or lazily on the first call that can unlock it)
+and is held for the process lifetime. The seed and passphrase are never tool arguments.
+
+For the money path behind these tools (discover on the DHT, talk over WireGuard, settle on
+Bitcoin L1, or pay a Silent Payments code offline) see [Payment flow](payment-flow.md). For
+the module/function/CLI/env reference see [Reference](reference.md).
 
 ## The tools
 
-| Tool | Args | Role | What it does |
-|---|---|---|---|
-| `cm_pay` | `card_key` (64-hex), `sats` | buyer | **the flagship**: resolve the card on the DHT, tunnel over WireGuard, settle on L1. Returns txid + explorer URL. |
-| `cm_send` | `address`, `sats` | buyer | raw on-chain send to an address you already hold. Returns txid + explorer URL. |
-| `cm_balance` | — | either | confirmed + pending balance on the active network. |
-| `cm_confs` | `txid` | either | confirmation count + status (pending/soft/final), and advances the ledger. |
-| `cm_collections` | — | seller | per issued receive index: address, awaiting/paid, txid, sats. How the seller agent sees a payment arrive. |
+The server exposes 11 tools (registered in `src/mcp.rs:169-367`, allowlisted in
+`src/mcp.rs:376-389`). Tools that take no arguments have an explicit empty-object
+`inputSchema`. Every `sats` field is an integer with `minimum: 1`.
 
-## One thing MCP cannot do: start the seller
+| Tool | Params | What it does |
+|---|---|---|
+| `cm_setup` | none | Create this agent's wallet if it has none, then report network, card key, static sp code, funding address, and balance, and publish the card to the DHT (best effort). Call this first, once. On mainnet the seed is sealed, so `CM_PASSPHRASE` must be in the server's registration env. (`mcp.rs:173`) |
+| `cm_pay` | `peer` (string, required), `sats` (int ≥1, required) | Pay a peer `sats` satoshis. `peer` is any of: an `sp1`/`tsp1` Silent Payments code (on-chain, payee may be offline), a 64-hex card key (resolved on the DHT; on-chain if the card carries an sp code, else a WireGuard tunnel), or a `wg-pubkey@host:port` direct link (tunnel, no DHT). Draws on ordinary funds and received silent-payment income. Returns txid + explorer URL. (`mcp.rs:184`) |
+| `cm_send` | `address` (string, required), `sats` (int ≥1, required) | Raw on-chain send of `sats` to a Bitcoin `address` you already hold. Draws on ordinary funds and received silent-payment income. Returns txid + explorer URL. (`mcp.rs:210`) |
+| `cm_fetch` | `url` (string, required), `max_sats` (int ≥1, optional, default 10000) | GET `url`; a normal 200 is returned as-is, a cm HTTP 402 is auto-paid on-chain within `max_sats` and the URL is retried until the content comes back. Returns the body, plus sats paid and txid when a payment happened. (`mcp.rs:234`) |
+| `cm_paywall` | `price_sats` (int ≥1, required), `body` (string, optional, default placeholder), `port` (int ≥1, optional, default 8402) | Sell one `body` for `price_sats` over HTTP 402 for the rest of this session (background thread; one per session). Returns a URL whose unpaid GET yields a 402 carrying your sp code and price; a paid retry (header `X-Payment: <txid>`) yields the content. Listen IP is auto-detected. (`mcp.rs:259`) |
+| `cm_balance` | none | Report spendable balance on the active network: confirmed + pending on-chain plus received silent-payment income. Scans the chain for offline SP income as part of the call; income received but not yet spendable (fewer than 3 confirmations) is shown on its own `incoming` line. (`mcp.rs:288`) |
+| `cm_collections` | none | Scan the chain for money paid to you and report every received payment (ordinary deposits and offline silent-payment income) as JSON `{ scan, collections[] }`. Books newly found silent payments before reporting. This is how a seller agent sees a payment arrive. (`mcp.rs:301`) |
+| `cm_confs` | `txid` (string, required) | Report `txid`'s confirmation count and status (pending/soft/final/failed) and advance the ledger's recorded status. (`mcp.rs:310`) |
+| `cm_id` | none | Print this agent's card key (the 64-hex identity a peer resolves on the DHT) and its static sp code. Both are payee handles. (`mcp.rs:327`) |
+| `cm_address` | none | Print the wallet's on-chain funding address (receive index 0), for topping up from an exchange or faucet. (`mcp.rs:335`) |
+| `cm_serve` | `bind` (string, optional, default `0.0.0.0:51820`), `ep` (string, optional, auto-detected) | Start the seller daemon in the background for the rest of this session (one per session): publish the card on the DHT, accept WireGuard tunnels, and watch the chain. Only needed for live peer sessions; for plain get-paid, `cm_setup`'s sp code is enough and you can stay offline. Returns the card key, endpoint, and a direct link. (`mcp.rs:342`) |
 
-The seller's body is `cm serve` — a **resident daemon**, not an MCP tool. An MCP server is
-request/response; a daemon would block it. So the split is deliberate:
+Notes on the two long-running tools:
 
-- **buyer = pure MCP** — the agent calls `cm_pay` / `cm_send`; no CLI.
-- **seller = `cm serve` daemon (one CLI line) + MCP for monitoring** — the daemon accepts
-  tunnels and books deposits from the chain; the seller agent watches with `cm_collections`.
+- `cm_serve` and `cm_paywall` each spawn a background thread that lives until the MCP
+  process exits with its client session. A second call to either returns "already
+  serving" / "already running" instead of racing a duplicate listener (`mcp.rs:38-42`).
+- `cm_setup`, `cm_serve`, and `cm_paywall` run before the shared wallet unlock, so they
+  work even when the session started with no wallet yet (`mcp.rs:395-402`).
 
-You cannot run the full two-agent flow with *zero* CLI: the seller daemon is the one process
-that must be started from a shell. Everything a person *asks* still goes through MCP.
+## Plain-language examples
 
-## Setup (signet demo wallet)
+| You say | The agent calls |
+|---|---|
+| "set up my wallet / what's my card key and sp code?" | `cm_setup` |
+| "what's my balance?" | `cm_balance` |
+| "pay 5000 sats to `sp1q…` (or a 64-hex card key)" | `cm_pay(peer, 5000)` |
+| "send 1000 sats to `<address>`" | `cm_send(address, 1000)` |
+| "buy the data at `<url>`, up to 2000 sats" | `cm_fetch(url, 2000)` |
+| "sell this text for 500 sats" | `cm_paywall(500, body)` |
+| "did anyone pay me?" | `cm_collections` |
+| "how many confirmations on `<txid>`?" | `cm_confs(txid)` |
+| "start accepting live peer sessions" | `cm_serve` |
 
-The installer already registered a `computermoney` MCP server on a throwaway **signet** wallet.
-Two notes:
+## Environment and setup
 
-1. **Restart your MCP client to load all five tools.** An older build exposed only
-   `cm_send` + `cm_balance`; the current binary adds `cm_pay`, `cm_confs`, `cm_collections`.
-   The registration points at the `cm` binary path, so restarting relaunches `cm mcp` with
-   the latest build.
-2. Manual registration (Claude Desktop, another client) — point the config at the binary:
+Register `cm mcp` as an MCP server with the `cm` binary path and the env that pins the
+wallet, network, and home directory. In Claude Code:
+
+```sh
+claude mcp add -s user computermoney \
+  -e CM_NETWORK=signet -- "$HOME/.cargo/bin/cm" mcp
+```
+
+Manual registration (Claude Desktop, another client) points the config at the binary:
 
 ```json
 {
@@ -390,82 +1162,70 @@ Two notes:
 }
 ```
 
-## Demo A — pure MCP, one wallet (works immediately)
-
-No daemon, no second agent. Just talk to the buyer wallet:
-
-- *"what's my computermoney balance?"* → `cm_balance`
-- *"send 1000 sats to `<signet-address>`"* → `cm_send` → returns a txid + explorer link
-- *"how many confirmations on `<txid>`?"* → `cm_confs`
-
-This shows natural-language Bitcoin settlement through MCP. It is a raw on-chain send, not the
-discover→talk→settle pipeline (that is Demo B).
-
-## Demo B — the full pipeline, agent to agent
-
-The money shot: one agent pays another over **DHT → WireGuard → Bitcoin L1**, driven by a
-plain sentence on the buyer side.
-
-**1. Start the seller daemon (CLI, one line).** A second identity in its own store:
-
-```sh
-export CM_NETWORK=signet
-CM_HOME=~/cm-seller cm setup                                   # create the seller wallet
-CM_HOME=~/cm-seller cm id                                      # -> the seller CARD KEY (copy it)
-CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820 &
-```
-
-**2. (Optional) register the seller as its own MCP server** so its agent can watch arrivals:
+To run a second identity (for example a seller alongside a buyer) register a second server
+with its own `CM_HOME`:
 
 ```sh
 claude mcp add -s user computermoney-seller \
   -e CM_NETWORK=signet -e CM_HOME="$HOME/cm-seller" -- "$HOME/.cargo/bin/cm" mcp
 ```
 
-**3. Pay from the buyer agent, in language:**
+### Environment variables the code reads
 
-> *"pay 5000 sats to `<seller-card-key>`"*
-
-The client calls `cm_pay(card_key, 5000)`, which resolves the seller's card on the DHT,
-opens the WireGuard tunnel to `127.0.0.1:51820`, asks for a fresh address, broadcasts 5000
-signet sats, and returns the txid.
-
-**4. Confirm arrival from the seller agent:**
-
-> *"did a payment land? show collections"* → `cm_collections`
-> *"confirmations on `<txid>`?"* → `cm_confs`
-
-The seller daemon's log also prints `verified <txid> pays 5000 sat to our address` — the
-receipt is taken from the chain, never from the buyer's claim.
-
-## Watching each layer work
-
-The pipeline is three layers you can see move independently. For a demo, keep the seller
-daemon's terminal visible and put these next to it.
-
-| Layer | What proves it | Where to look |
+| Variable | Read at | Meaning |
 |---|---|---|
-| **DHT** (discover) | seller prints `[serve] published card <key> @ 127.0.0.1:51820`; the buyer prints `resolving card <8hex>… (DHT)` then `dialing …`. The card is a signed BEP-44 record on the public BitTorrent DHT — no server holds it. | daemon log + `cm_pay` progress |
-| **WireGuard** (talk) | seller prints `[serve] session opened with <buyer-wg-key>`. And the wire is genuinely encrypted — sniff it: `sudo tcpdump -i lo0 -X udp port 51820` shows ciphertext, never the JSON messages. | logs + `tcpdump` |
-| **Bitcoin L1** (settle) | `cm_pay` returns `txid …` + an explorer URL — open it and watch the tx pay the seller's address. The seller prints `verified <txid> pays 5000 sat to our address`, and `cm_confs` walks it to *final*. | block explorer + logs |
+| `CM_NETWORK` | `storage.rs:240` | Active Bitcoin network: `mainnet` (default) `\|` `testnet` `\|` `signet`. Anything unset/unrecognized is mainnet. |
+| `CM_PASSPHRASE` | `main.rs:61`, `mcp.rs:443`, `storage.rs:303` | Unlocks (and, at setup, seals) the encrypted seed. Required on mainnet; absent on signet/testnet the mnemonic is stored plaintext. |
+| `CM_POLICY` | `policy.rs:109` | Path override for the policy file (default `~/.config/computermoney/policy.json`). |
+| `CM_HOME` | `storage.rs:88` | Absolute path overriding the config root, so several agents can run on one machine without sharing state. |
+| `CM_MNEMONIC` | `storage.rs:293` | Explicit escape hatch: a plaintext mnemonic that wins over the stored wallet. Refused on mainnet. |
+| `CM_ID` | `storage.rs:297` | Identity prefix to pick among several wallets under one home. |
+| `CM_ESPLORA` | `storage.rs:265` | Override the esplora endpoint used for chain sync. |
 
-## Notes
+The passphrase and seed come from this registration env, never from a tool call. Per the
+server's own `initialize` instructions, an agent should not set env vars or run shell
+commands to "prepare" cm; it just calls the tools.
 
-- **Signet vs testnet.** The demo wallet is signet (30-second blocks, reliable
-  [faucet](https://faucet.mutinynet.com/), 3-conf final ≈ 90 s). Testnet3 works the same way
-  (`CM_NETWORK=testnet`) but is slower and its faucets are often dry.
-- **`cm_pay` not listed?** Restart the client (see Setup step 1).
-- **`no card found on the DHT`** — give the seller daemon 30–60 s to propagate after start,
-  then retry. To skip the DHT and exercise only WireGuard + L1, there is no MCP form; use the
-  CLI direct path `cm pay <wg-pubkey>@127.0.0.1:51820 <sats>`.
-- **Mainnet** is opt-in and fail-closed: unlock a sealed seed with `CM_PASSPHRASE` and set a
-  `CM_POLICY` spend cap, or `cm` refuses to broadcast.
+### Mainnet fail-closed spend cap
+
+The spend policy is data loaded from `~/.config/computermoney/policy.json` (override with
+`CM_POLICY`). An absent file deserializes to a permissive default: no restrictions, which
+is fine for a signet/testnet demo (`policy.rs:106-115`). The optional fields are
+`max_payment_sats`, `daily_limit_sats`, `max_fee_sats`, and `blocked_addresses`; each
+missing field turns that limit off (`policy.rs:27-38`).
+
+On mainnet the wallet fails closed. `ensure_mainnet_capped` (`policy.rs:93-104`) refuses a
+broadcast unless the effective policy sets **at least one spend cap** (`max_payment_sats`
+or `daily_limit_sats`) **and** a fee cap (`max_fee_sats`). An absent or empty (`{}`)
+policy is the permissive default, so it is rejected on mainnet with a typed error:
+`MainnetUncapped` when no spend cap is set, `MainnetNoFeeCap` when a spend cap is set but
+the fee is left unbounded. Signet and testnet stay permissive by design and the guard
+never trips (`policy.rs:247-251`). So on mainnet, write a `policy.json` with at least one
+spend cap and a fee cap before any send will broadcast.
+
+The other gates run on every send too: `check_amount` enforces the per-payment cap and a
+rolling 24-hour daily cap (`DAILY_WINDOW_SECS = 86_400`), `check_address` enforces the
+blocklist, and `check_fee` bounds the fee once the transaction is built
+(`policy.rs:119-149`).
+
+## Safety
+
+- **The seed never crosses the tool boundary.** No tool takes a mnemonic, seed, or
+  passphrase argument. The wallet is unlocked once from the server's registration env
+  (`CM_PASSPHRASE`/`CM_MNEMONIC`) and reused for the process lifetime (`mcp.rs:16-21`,
+  `55-69`).
+- **The spend cap has a single choke point.** `ensure_mainnet_capped` is the one
+  definition of the mainnet fail-closed guard, and every send path routes through
+  `chain::send`, which calls it (`policy.rs:84-104`). The MCP `cm_send` and Silent
+  Payments paths additionally gate `check_amount` + `check_address` up front
+  (`mcp.rs:758-775`, `942-953`); the tunnel `cm_pay` path gates inside `net::run_payer`,
+  so the policy is enforced exactly once regardless of which tool moved the money.
 
 
-
-========================================================================
+======================================================================
 # Try it (2 terminals)  (docs/demo-2-terminal.md)
-========================================================================
+======================================================================
+
 
 One machine, two terminals, the full **discover (DHT) → talk (WireGuard) → settle
 (Bitcoin L1)** pipeline between two agents. Everything is **signet** (worthless coins,
@@ -576,118 +1336,3 @@ matched to the address it issued — never from the buyer's claim.
 - **Reset:** `rm -rf ~/cm-seller` (signet coins are worthless).
 - **Testnet3** works the same with `CM_NETWORK=testnet`, but blocks are ~10 min and faucets
   are often dry; signet is the smoother demo.
-
-
-
-========================================================================
-# Demo video script  (docs/demo-video-script.md)
-========================================================================
-
-A ~2-minute screen recording where an agent pays another agent in Bitcoin, and you can
-*see* each of the three layers move. The buyer is driven in plain language through MCP; the
-seller is a background daemon. Everything is **signet** (worthless coins, 30-second blocks).
-
-## Recording setup
-
-Lay out four panes:
-
-- **Claude** (the MCP client) — where you type the buyer's instruction. Large, left half.
-- **Seller daemon** terminal (top-right): the `cm serve` log.
-- **tcpdump** terminal (mid-right): proves the tunnel is encrypted.
-- **Browser** (bottom-right / full-screen for the L1 beat): the block explorer.
-
-Prep before you hit record (off camera):
-
-```sh
-export CM_NETWORK=signet
-CM_HOME=~/cm-seller cm setup            # seller wallet (needs no coins)
-CM_HOME=~/cm-seller cm id               # -> SELLER CARD KEY, keep it on a sticky note
-```
-
-Confirm the buyer (your registered MCP wallet) has signet funds: ask Claude *"what's my
-computermoney balance?"* — it should show a few thousand sats. If not, fund the address from
-<https://faucet.mutinynet.com/>. Make sure Claude shows the `cm_pay` tool (restart it if you
-only see `cm_send`/`cm_balance`).
-
----
-
-## Scene 1 — the cast (0:00–0:20)
-
-**On screen:** the seller terminal. Start the daemon.
-
-```sh
-CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820
-```
-
-**Say:** "Two AI agents, one machine, each with its own Bitcoin wallet. This is the seller.
-It has no address book and no server — its only public handle is a *card key*."
-
-## Scene 2 — DHT: the card goes up (0:20–0:40)
-
-**On screen:** highlight the seller line `[serve] published card <wg-key> @ 127.0.0.1:51820`,
-and keep the **card key** from `cm id` (Scene setup) visible on its sticky note.
-
-**Say:** "The seller signs a tiny card — its tunnel endpoint — and publishes it to the public
-BitTorrent DHT. No server hosts it. Any agent that knows the key can look the seller up,
-anywhere in the world." *(Callout: the payable lookup key is the `cm id` value; the log line
-above just confirms the publish is live. The hex in the log is the tunnel key inside the
-card, not the lookup key — don't paste that one.)*
-
-## Scene 3 — WireGuard: the tunnel (0:40–1:10)
-
-**On screen:** Claude. Type the buyer's instruction:
-
-> **pay 5000 sats to `<seller-card-key>`**
-
-As `cm_pay` runs, the buyer shows `resolving card …(DHT)` → `dialing … @ 127.0.0.1:51820`,
-and the seller flips to `[serve] session opened with <buyer-key>`.
-
-Cut to the tcpdump pane (start it just before you send):
-
-```sh
-sudo tcpdump -i lo0 -X udp port 51820
-```
-
-**Say:** "One sentence. The buyer resolves that card on the DHT, then opens a *real*
-WireGuard tunnel — keyed by the wallet seed, not a password. Watch the wire: it's pure
-ciphertext. The amount, the address, everything the two agents say is encrypted." *(Callout:
-the hex dump — no readable JSON.)*
-
-## Scene 4 — Bitcoin L1: settle (1:10–1:45)
-
-**On screen:** `cm_pay` returns `txid …` and an explorer URL. Open it.
-
-**Say:** "The buyer builds one Bitcoin transaction, signs it with its key, and broadcasts it.
-Here it is on the chain — 5000 sats to the address the seller just handed out." *(Show the tx
-on mutinynet.)*
-
-Back to the seller log: `verified <txid> pays 5000 sat to our address`. Then in Claude:
-
-> **did a payment arrive? show collections** → `cm_collections` (shows *paid*)
-> **confirmations on `<txid>`?** → `cm_confs` (→ *final*)
-
-**Say:** "The seller doesn't trust the buyer's word — it reads the *chain*, confirms the tx
-really pays its address, and books the real amount. Three confirmations: final."
-
-## Scene 5 — the point (1:45–2:00)
-
-**Say:** "No custodian ever held the coins. No account, no server. One seed is the identity
-for both the money and the channel — the key *is* the agent. That's computermoney."
-
-**On screen:** the repo + `curl -fsSL …/install.sh | sh`.
-
----
-
-## 60-second cut
-
-Drop Scene 1 and the explorer beat. Sequence: card key on screen (5s) → *"pay 5000 sats to
-this"* in Claude (10s) → DHT-resolve + tunnel logs + tcpdump ciphertext (20s) → txid returned
-+ seller `verified … pays 5000` + `cm_confs` final (20s) → one-line close (5s).
-
-## Layer cheat-sheet (keep visible while editing)
-
-| Beat | The one thing to show |
-|---|---|
-| DHT | seller `published card <key>` — no server holds it |
-| WireGuard | tcpdump ciphertext + `session opened with <key>` |
-| Bitcoin L1 | the txid on the explorer + `verified … pays 5000 sat` |

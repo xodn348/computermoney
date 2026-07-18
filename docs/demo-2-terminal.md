@@ -1,6 +1,6 @@
 ---
 title: Try it (2 terminals)
-nav_order: 4
+nav_order: 6
 ---
 
 One machine, two terminals, the full **discover (DHT) → talk (WireGuard) → settle
