@@ -1,7 +1,5 @@
 # computermoney
 
-> Money that computers use. **Bitcoin-native payments between AI agents.**
-
 AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies needed.
 
 ## How it works
