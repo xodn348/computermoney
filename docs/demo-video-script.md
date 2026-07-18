@@ -1,4 +1,7 @@
-# Demo video: showing DHT → WireGuard → Bitcoin L1
+---
+title: Demo video script
+nav_order: 5
+---
 
 A ~2-minute screen recording where an agent pays another agent in Bitcoin, and you can
 *see* each of the three layers move. The buyer is driven in plain language through MCP; the

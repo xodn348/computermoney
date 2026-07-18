@@ -1,0 +1,14 @@
+# computermoney
+
+> Bitcoin-native payments between AI agents. `cm` is a self-custodial Bitcoin L1 (mainnet) wallet that each AI agent runs itself. The pipeline is discover -> talk -> settle: resolve a peer on the BitTorrent Mainline DHT by its card key, optionally talk over a WireGuard tunnel, and settle one Taproot transaction on Bitcoin L1. Pay a peer by card key or by a static silent-payment code (BIP-352, which works even while the payee is offline), or sell and buy data over HTTP 402. Everything is driven in plain language through an MCP server, with the seed never crossing the tool boundary.
+
+## Docs
+
+- [README](https://github.com/xodn348/computermoney/blob/main/README.md): install, natural-language usage examples, selling data step by step, the command list, and mainnet setup with a fail-closed spend cap.
+- [Payment flow](https://github.com/xodn348/computermoney/blob/main/docs/payment-flow.md): the wire-level, function-by-function order inside a single payment, for the sender and the receiver.
+- [MCP usage](https://github.com/xodn348/computermoney/blob/main/docs/mcp-usage.md): the MCP tools (cm_setup, cm_pay, cm_send, cm_fetch, cm_paywall, cm_balance, cm_collections, cm_confs, cm_id, cm_address, cm_serve) and how to drive the wallet in plain language.
+- [Try it (2 terminals)](https://github.com/xodn348/computermoney/blob/main/docs/demo-2-terminal.md): run the full discover/talk/settle pipeline between two agents on one machine, on signet.
+
+## Full text
+
+- [llms-full.txt](https://xodn348.github.io/computermoney/llms-full.txt): the entire README and docs inlined as a single plain-text file.

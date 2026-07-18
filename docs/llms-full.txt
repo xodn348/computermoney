@@ -1,0 +1,693 @@
+# computermoney — full documentation
+
+> Bitcoin-native payments between AI agents. This file inlines the README and all docs for AI consumption.
+
+
+
+========================================================================
+# README  (README.md)
+========================================================================
+
+# computermoney
+
+> Money that computers use. **Bitcoin-native payments between AI agents.**
+
+`cm` is a self-custodial **Bitcoin L1 (mainnet)** wallet for AI agents. Each agent runs its
+own `cm`, holds its own seed, and pays other agents in real bitcoin, one Taproot transaction
+per payment. No account, no API key, no payment processor. **The key is the identity, not the
+IP:** a peer is addressed by its cryptographic card key, and a payee that publishes a static
+silent-payment code can be paid while fully offline.
+
+> Real money by default. You can also experiment risk-free on **signet/testnet**
+> (`CM_NETWORK=signet`) with worthless coins; the one-line installer starts you there.
+
+## How it works
+
+Three layers, each doing one job: **discover** on the DHT, **talk** over WireGuard, **settle**
+on Bitcoin L1.
+
+```
+   Agent A (payer)                                    Agent B (payee)
+   seed --> keys                                      seed --> keys
+        |                                                  |
+        |  (1) DISCOVER  ----- Mainline DHT ----------->   |  resolve B's card key
+        |      fetch B's card: sp code + endpoint          |  -> sp code + endpoint
+        |                                                  |
+        |  (2) TALK      <---- WireGuard tunnel ------->    |  answer with an address
+        |      messages only, LAN/localhost, no internet    |  (live sessions only;
+        |                                                  |   the offline path skips it)
+        |  (3) SETTLE    ----- Bitcoin L1 (Taproot) --->   |  scan / reconcile
+        |      one tx per payment                           |  the chain is the truth
+        v                                                  v
+   +---------------------- Bitcoin network -----------------------+
+   |   0 / 1 / 3 confirmations  =  Pending / Soft / Final         |
+   +-------------------------------------------------------------+
+```
+
+**1. Discover — Mainline DHT.** A peer *is* its card key (a 32-byte ed25519 public key).
+`cm` publishes a signed card (the peer's silent-payment code and network endpoints) to the
+BitTorrent Mainline DHT under that key, and anyone holding the key resolves it, with no
+central directory to trust. More: [BEP 44 — DHT storage](https://www.bittorrent.org/beps/bep_0044.html).
+
+**2. Talk — WireGuard.** When both agents are online and want a live exchange, `cm` opens a
+WireGuard tunnel keyed by the same seed. It carries messages only (an address request, a
+payment notice), never coins, and runs on a LAN or localhost with no internet. The offline
+path skips this layer entirely. More: [WireGuard whitepaper](https://www.wireguard.com/papers/wireguard.pdf).
+
+**3. Settle — Bitcoin L1.** Every payment is one Taproot transaction on Bitcoin mainnet. The
+chain, not any peer's message, is the source of truth: the receiver credits the real on-chain
+output, and confirmations advance it. Silent Payments
+([BIP-352](https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki)) give the payee a
+fresh one-time address per payment from one static code, so it can be paid offline and scan
+for its income later.
+
+**Also over HTTP 402.** `cm` can sell and buy data directly: a seller serves a body behind an
+HTTP 402 response that carries its sp code, and a buyer's `cm fetch` pays it on-chain within a
+cap and gets the content back. No signup, no card. See [Selling data](#selling-data-step-by-step).
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.sh | sh
+```
+
+Builds and installs the `cm` binary (needs a [Rust toolchain](https://rustup.rs) and a C
+compiler) and, if Claude Code is detected, registers the `cm mcp` server. It starts you on a
+**signet demo wallet** so you can try everything with worthless coins; fund the printed address
+from the [faucet](https://faucet.mutinynet.com/). Move to real bitcoin in
+[Going to mainnet](#going-to-mainnet-real-bitcoin).
+
+## Using it
+
+Once `cm mcp` is registered, you drive the wallet by talking to your agent, with no shell, no
+flags, and no key handling.
+
+| You say | What `cm` does |
+|---|---|
+| *"set up my wallet"* | creates the wallet, prints your card key, sp code, and funding address |
+| *"what's my address?"* | your on-chain address, to top up from an exchange |
+| *"pay 5000 sats to `<card-key>`"* | resolves the peer on the DHT and settles one Taproot tx, returns the txid |
+| *"did anyone pay me?"* / *"what's my balance?"* | scans the chain and shows received income, including money paid while you were offline |
+| *"sell the contents of `report.json` for 800 sats"* | serves it behind an HTTP 402 that carries your sp code |
+| *"fetch `<url>` and pay if it asks"* | pays the 402 within your cap and returns the content |
+
+## Selling data, step by step
+
+One agent can sell a dataset to another for bitcoin, end to end, with no human in the loop.
+Here is the exact sequence and the natural-language prompt that drives each step.
+
+**Seller (agent B)**
+
+1. *"sell the contents of `report.json` for 800 sats"* → B reads the file and opens an HTTP
+   402 endpoint (`cm_paywall`), which returns a URL. Any GET without payment gets B's terms:
+   ```
+   HTTP/1.1 402 Payment Required
+   {"cm402":1,"sats":800,"pay_to":"sp1…","network":"mainnet"}
+   ```
+
+**Buyer (agent A)**
+
+2. *"fetch `http://<B-host>:8402` and pay if it asks"* → A GETs the URL (`cm_fetch`), reads the
+   402 terms, and pays 800 sats **on-chain to B's sp code**, staying within A's spend cap.
+3. A retries the GET with proof of payment: `X-Payment: <txid>`.
+
+**Seller (agent B)**
+
+4. B verifies that txid against its own scan key: the transaction must pay B at least 800 sats,
+   and each txid is redeemable once. If it checks out, B returns the dataset.
+
+**Result:** A has the data; B earned 800 sats that spend like any other funds (B can pay it
+forward immediately with *"pay …"*). The payment terms travelled inside the protocol; no key,
+invoice, or account was handed around.
+
+## Going to mainnet (real bitcoin)
+
+The installer wallet is signet. For real money, register the MCP server with
+`CM_NETWORK=mainnet`, unlock a sealed seed with a passphrase, and **set a spend cap**: on
+mainnet `cm` refuses to broadcast without one.
+
+```json
+"env": {
+  "CM_NETWORK": "mainnet",
+  "CM_PASSPHRASE": "<passphrase that seals the seed>",
+  "CM_POLICY": "/abs/path/to/policy.json"
+}
+```
+```json
+// policy.json — a limit the agent cannot talk its way around
+{ "max_payment_sats": 50000, "daily_limit_sats": 200000 }
+```
+
+The cap is **fail-closed**: an absent or empty policy on mainnet rejects the send before any
+signing, at the single chokepoint every send path funnels through. Signet and testnet stay
+permissive for experimentation.
+
+## Commands
+
+```
+cm setup                          create a wallet; print identity, sp code, address, balance
+cm id                             print your card key and static sp code (the handles you share)
+cm publish [host:port ...]        sign and put your card (sp code, endpoints) to the DHT
+cm serve [--bind a] [--ep a]      run the seller daemon: publish, accept buyers, watch the chain
+cm pay <sp-code | card-key | pubkey@host:port> <sats>   pay a peer (sp code / card key may be offline)
+cm fetch <url> [--max-sats N]     GET a URL, auto-paying an HTTP 402 within the cap
+cm paywall <price> [--port N] [--body S]   sell one body over HTTP 402
+cm balance                        scan the chain, print on-chain + silent-payment balance
+cm confs <txid>                   confirmation count and status (pending / soft / final)
+cm mcp                            run as an MCP server so an agent drives it in plain language
+```
+
+## MCP
+
+`cm mcp` exposes the whole pipeline to any MCP client (Claude Code, Claude Desktop, or your
+own agent) as plain-language tools, so *"pay 5000 sats to `<card-key>`"* just works with no
+shell and no key handling. The seed never crosses the tool boundary. See
+[`docs/mcp-usage.md`](docs/mcp-usage.md).
+
+## Docs
+
+- [`docs/payment-flow.md`](docs/payment-flow.md) — the function-by-function order inside `cm pay` and the seller daemon.
+- [`docs/mcp-usage.md`](docs/mcp-usage.md) — driving the wallet in plain language over MCP.
+- [`docs/demo-2-terminal.md`](docs/demo-2-terminal.md) — try the full pipeline on one machine (signet).
+- [`docs/demo-video-script.md`](docs/demo-video-script.md) — shot list for the demo video.
+- [`llms.txt`](llms.txt) — an AI-readable map of the docs.
+
+## License
+
+**[GNU AGPL v3.0](LICENSE)**, Copyright (C) 2026 Ebsilon, Inc. Network use counts as
+distribution: run a modified `cm` as a service and you must offer its users the source. See
+[`LICENSE`](LICENSE) for the exact terms.
+
+The name and logo are trademarks of Ebsilon, Inc., covered separately by the
+[trademark policy](TRADEMARK.md): the code is yours to build on under the AGPL, but
+"computermoney" as a product name is not. Contributions require a Developer Certificate of
+Origin sign-off (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
+
+Third-party components (all permissive) are listed in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+
+
+
+========================================================================
+# Payment flow  (docs/payment-flow.md)
+========================================================================
+
+This is the wire-level walkthrough of a single payment — what the **sender** and
+**receiver** actually do, in order, the moment each command runs. The high-level
+picture is in the [README](../README.md#how-a-payment-works-wireguard--cm--bitcoin-l1);
+this is the function-by-function detail behind it.
+
+Source of truth: [`src/tunnel.rs`](../src/tunnel.rs) (WireGuard transport) and
+[`src/net.rs`](../src/net.rs) (the transport-agnostic payment protocol).
+
+## The key idea: two handshakes, stacked
+
+A payment rides two handshakes that are layered, never mixed:
+
+1. **The WireGuard handshake** (Noise_IK, X25519) opens an *encrypted tunnel* between
+   the two agents. This is the "secure pipe" — it authenticates *who* each side is by
+   their X25519 public key (derivation branch 3, the `cm id` value) and encrypts
+   everything sent afterward. This is the line `[wg] tunnel established`.
+2. **The address handshake** (`AddrRequest` → `AddrResponse`) runs *inside* that tunnel.
+   Its only job is to agree on *where the money goes*: the sender does not know a
+   destination address until the receiver mints a fresh one and hands it back.
+
+The WireGuard keys secure the channel; `AddrRequest`/`AddrResponse` are the first
+conversation held over that now-encrypted channel. Only after **both** does any Bitcoin
+move — and the coins move over the Bitcoin network, not the tunnel.
+
+## Sequence
+
+```
+        cm pay (sender A)                          cm receive (receiver B)
+ ══════════════════════════                 ══════════════════════════
+ tunnel::pay                                 tunnel::serve
+  │ seed → X25519 secret (branch 3)           │ seed → X25519 secret (branch 3)
+  │ bind UDP 0.0.0.0:0                         │ bind UDP :51820  → "listening"  (waits)
+  │                                           │
+  │── 1. WireGuard handshake (Noise_IK) ──────────────────────────────────────
+  │ FramedTunnel::connect                      │ FramedTunnel::accept
+  │ handshake_init ──(msg1 initiation)───────▶ process initiation
+  │ process       ◀──(msg2 response)────────── send back response
+  │ ──keepalive──────────────────────────────▶ process → session ready
+  │ ECDH session keys established              │  ⚠ wrong peer key → InvalidMac HERE
+  │ "[wg] tunnel established"                  │  "[wg] tunnel established with peer"
+  │                                           │
+  │── from here every message is sealed inside the encrypted tunnel ──────────
+ net::run_payer                              net::run_receiver  (recv loop)
+  │ policy.check_amount   (spend gate)         │
+  │                                           │
+  │── 2. address handshake ───────────────────────────────────────────────────
+  │ send AddrRequest{sats} ──(tunnel)────────▶ recv AddrRequest
+  │                                           │   Receiver::handle → derive a fresh
+  │                                           │   BIP-86 address (index++)
+  │                                           │   ledger.append(AddressIssued, index)
+  │ recv ◀──── AddrResponse{addr, index} ───── send AddrResponse
+  │ policy.check_address(addr)  (blocklist)    │
+  │                                           │
+  │── 3. settle on Bitcoin L1 (NOT the tunnel — the open internet) ───────────
+  │ chain::send: sync UTXOs (esplora)          │
+  │   → build tx → recommended_feerate         │
+  │   → Schnorr-sign → broadcast → txid        │
+  │ ledger.append(Sent)   ← recorded BEFORE notifying (crash-safe)
+  │                                           │
+  │ send Notify{txid, sats} ──(tunnel)───────▶ recv Notify
+  │ print txid + explorer link                 │   ledger.append(Received, Pending)
+  │ done                                       │   ledger::reconcile → query confs on-chain
+  │                                           │   advance status (0/1/3 = Pending/Soft/Final)
+  │                                           │   keep listening; peer idle → exit
+```
+
+## What the sender does — `cm pay <peer-pubkey>@<host:port> <sats>`
+
+`main.rs` → `tunnel::pay` → `net::run_payer`:
+
+1. **Derive identity and connect.** Derive this agent's X25519 secret from the seed
+   (branch 3), bind a UDP socket, and run the WireGuard *initiator* handshake to the
+   peer's address, keyed to the peer's X25519 public key (`FramedTunnel::connect`). If
+   that public key is wrong, decryption fails with `InvalidMac` — the **handshake**
+   breaks, before any payment message is ever sent.
+2. **Amount gate.** `policy.check_amount` runs before the first message, so an
+   over-limit payment never even opens the conversation.
+3. **Ask for an address.** Send `AddrRequest{sats}` over the tunnel; block until
+   `AddrResponse{address, index}` comes back.
+4. **Address gate.** `policy.check_address` checks the blocklist now that the
+   destination is known.
+5. **Settle on-chain.** `chain::send` syncs the wallet's UTXOs from esplora, builds the
+   transaction, fetches the network's recommended feerate, Schnorr-signs, and broadcasts
+   to the Bitcoin network. This is *not* carried by the tunnel — it is the sender's own
+   link to Bitcoin (the open internet).
+6. **Record, then notify.** Append a `Sent` entry to the signed ledger *before* sending
+   `Notify{txid, sats}`, so a crash after broadcast still leaves the payment on the work
+   queue. Print the txid and explorer link.
+
+## What the receiver does — `cm receive <payer-pubkey> [bind]`
+
+`main.rs` → `tunnel::serve` → `net::run_receiver`:
+
+1. **Listen and handshake.** Bind a UDP socket and wait. Run the WireGuard *responder*
+   handshake (`FramedTunnel::accept`), authenticating the initiator against the
+   `<payer-pubkey>` you passed. The tunnel is up once the keepalive completes.
+2. **Issue a fresh address.** On `AddrRequest{sats}`: `Receiver::handle` derives the next
+   unused BIP-86 address, appends `AddressIssued{index}` to the ledger, and replies with
+   `AddrResponse{address, index}`. A fresh address per payment means no address reuse, and
+   the index later binds the payment to this issuance.
+3. **Record the notify.** On `Notify{txid, sats}`: append a `Received` entry (status
+   `Pending`).
+4. **Reconcile against the chain.** Do not trust the `Notify` — `ledger::reconcile`
+   queries the txid's confirmations on-chain and advances the ledger status
+   (0/1/3 confs = Pending/Soft/Final). The chain, not the peer's message, is the source
+   of truth for whether money arrived.
+5. **Keep serving** until the peer goes idle (the socket read times out and `recv`
+   returns `None`).
+
+> **Honest gap.** Today `reconcile` confirms the txid is buried but does not yet verify
+> that the transaction pays B's *issued address* for the *claimed amount*, so a lying
+> `Notify` can record a phantom credit. Verifying the on-chain output inside `reconcile`
+> is the top correctness fix (also noted in the README).
+
+## Why `cm receive` must be running first
+
+`cm pay` is the initiator and `cm receive` is the responder: the responder must already
+be listening for the initiator to connect, and the receiver mints the destination address
+*live* during the exchange — the sender has nowhere to send until it gets one. This is a
+property of the **interactive coordination**, not of Bitcoin.
+
+If you already know a static address out of band, `cm send <addr> <sats>` broadcasts
+on-chain with no tunnel and no daemon — the receiver can be offline and check `cm balance`
+later. That path skips address rotation, the `Notify` hint, and auto-reconcile.
+
+## Framing detail
+
+Each `Message` is `serde_json`-encoded (`Message::encode`), wrapped in a minimal IPv4
+packet (WireGuard tunnels IP, so each frame rides inside one), encrypted by WireGuard's
+ChaCha20-Poly1305 (`WgCore::seal` → `encapsulate`), and sent as a UDP datagram. On the
+way in, `WgCore::process` decapsulates and `Message::decode` reassembles. The plaintext
+JSON never appears in the encrypted datagram — verified by a test in `tunnel.rs`.
+
+## The split, in one line
+
+**WireGuard moves messages; Bitcoin L1 moves money; `cm` is the bridge.** The tunnel
+carries `AddrRequest` / `AddrResponse` / `Notify` and nothing of value; the coins move
+over the Bitcoin network and are confirmed by the chain. The payment protocol in `net.rs`
+does not know which transport carries its bytes — swap the tunnel for the TCP stand-in in
+the tests and the logic above does not move.
+
+
+
+========================================================================
+# MCP usage  (docs/mcp-usage.md)
+========================================================================
+
+Drive the whole wallet in plain language. `cm mcp` runs the same `cm` binary as a
+[Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an MCP
+client (Claude Code, Claude Desktop, your own agent) calls tools instead of you typing
+`cm`. The seed and passphrase are never tool arguments — the wallet unlocks once at startup
+and is held for the process lifetime.
+
+## The tools
+
+| Tool | Args | Role | What it does |
+|---|---|---|---|
+| `cm_pay` | `card_key` (64-hex), `sats` | buyer | **the flagship**: resolve the card on the DHT, tunnel over WireGuard, settle on L1. Returns txid + explorer URL. |
+| `cm_send` | `address`, `sats` | buyer | raw on-chain send to an address you already hold. Returns txid + explorer URL. |
+| `cm_balance` | — | either | confirmed + pending balance on the active network. |
+| `cm_confs` | `txid` | either | confirmation count + status (pending/soft/final), and advances the ledger. |
+| `cm_collections` | — | seller | per issued receive index: address, awaiting/paid, txid, sats. How the seller agent sees a payment arrive. |
+
+## One thing MCP cannot do: start the seller
+
+The seller's body is `cm serve` — a **resident daemon**, not an MCP tool. An MCP server is
+request/response; a daemon would block it. So the split is deliberate:
+
+- **buyer = pure MCP** — the agent calls `cm_pay` / `cm_send`; no CLI.
+- **seller = `cm serve` daemon (one CLI line) + MCP for monitoring** — the daemon accepts
+  tunnels and books deposits from the chain; the seller agent watches with `cm_collections`.
+
+You cannot run the full two-agent flow with *zero* CLI: the seller daemon is the one process
+that must be started from a shell. Everything a person *asks* still goes through MCP.
+
+## Setup (signet demo wallet)
+
+The installer already registered a `computermoney` MCP server on a throwaway **signet** wallet.
+Two notes:
+
+1. **Restart your MCP client to load all five tools.** An older build exposed only
+   `cm_send` + `cm_balance`; the current binary adds `cm_pay`, `cm_confs`, `cm_collections`.
+   The registration points at the `cm` binary path, so restarting relaunches `cm mcp` with
+   the latest build.
+2. Manual registration (Claude Desktop, another client) — point the config at the binary:
+
+```json
+{
+  "mcpServers": {
+    "computermoney": {
+      "command": "/Users/you/.cargo/bin/cm",
+      "args": ["mcp"],
+      "env": { "CM_NETWORK": "signet" }
+    }
+  }
+}
+```
+
+## Demo A — pure MCP, one wallet (works immediately)
+
+No daemon, no second agent. Just talk to the buyer wallet:
+
+- *"what's my computermoney balance?"* → `cm_balance`
+- *"send 1000 sats to `<signet-address>`"* → `cm_send` → returns a txid + explorer link
+- *"how many confirmations on `<txid>`?"* → `cm_confs`
+
+This shows natural-language Bitcoin settlement through MCP. It is a raw on-chain send, not the
+discover→talk→settle pipeline (that is Demo B).
+
+## Demo B — the full pipeline, agent to agent
+
+The money shot: one agent pays another over **DHT → WireGuard → Bitcoin L1**, driven by a
+plain sentence on the buyer side.
+
+**1. Start the seller daemon (CLI, one line).** A second identity in its own store:
+
+```sh
+export CM_NETWORK=signet
+CM_HOME=~/cm-seller cm setup                                   # create the seller wallet
+CM_HOME=~/cm-seller cm id                                      # -> the seller CARD KEY (copy it)
+CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820 &
+```
+
+**2. (Optional) register the seller as its own MCP server** so its agent can watch arrivals:
+
+```sh
+claude mcp add -s user computermoney-seller \
+  -e CM_NETWORK=signet -e CM_HOME="$HOME/cm-seller" -- "$HOME/.cargo/bin/cm" mcp
+```
+
+**3. Pay from the buyer agent, in language:**
+
+> *"pay 5000 sats to `<seller-card-key>`"*
+
+The client calls `cm_pay(card_key, 5000)`, which resolves the seller's card on the DHT,
+opens the WireGuard tunnel to `127.0.0.1:51820`, asks for a fresh address, broadcasts 5000
+signet sats, and returns the txid.
+
+**4. Confirm arrival from the seller agent:**
+
+> *"did a payment land? show collections"* → `cm_collections`
+> *"confirmations on `<txid>`?"* → `cm_confs`
+
+The seller daemon's log also prints `verified <txid> pays 5000 sat to our address` — the
+receipt is taken from the chain, never from the buyer's claim.
+
+## Watching each layer work
+
+The pipeline is three layers you can see move independently. For a demo, keep the seller
+daemon's terminal visible and put these next to it.
+
+| Layer | What proves it | Where to look |
+|---|---|---|
+| **DHT** (discover) | seller prints `[serve] published card <key> @ 127.0.0.1:51820`; the buyer prints `resolving card <8hex>… (DHT)` then `dialing …`. The card is a signed BEP-44 record on the public BitTorrent DHT — no server holds it. | daemon log + `cm_pay` progress |
+| **WireGuard** (talk) | seller prints `[serve] session opened with <buyer-wg-key>`. And the wire is genuinely encrypted — sniff it: `sudo tcpdump -i lo0 -X udp port 51820` shows ciphertext, never the JSON messages. | logs + `tcpdump` |
+| **Bitcoin L1** (settle) | `cm_pay` returns `txid …` + an explorer URL — open it and watch the tx pay the seller's address. The seller prints `verified <txid> pays 5000 sat to our address`, and `cm_confs` walks it to *final*. | block explorer + logs |
+
+## Notes
+
+- **Signet vs testnet.** The demo wallet is signet (30-second blocks, reliable
+  [faucet](https://faucet.mutinynet.com/), 3-conf final ≈ 90 s). Testnet3 works the same way
+  (`CM_NETWORK=testnet`) but is slower and its faucets are often dry.
+- **`cm_pay` not listed?** Restart the client (see Setup step 1).
+- **`no card found on the DHT`** — give the seller daemon 30–60 s to propagate after start,
+  then retry. To skip the DHT and exercise only WireGuard + L1, there is no MCP form; use the
+  CLI direct path `cm pay <wg-pubkey>@127.0.0.1:51820 <sats>`.
+- **Mainnet** is opt-in and fail-closed: unlock a sealed seed with `CM_PASSPHRASE` and set a
+  `CM_POLICY` spend cap, or `cm` refuses to broadcast.
+
+
+
+========================================================================
+# Try it (2 terminals)  (docs/demo-2-terminal.md)
+========================================================================
+
+One machine, two terminals, the full **discover (DHT) → talk (WireGuard) → settle
+(Bitcoin L1)** pipeline between two agents. Everything is **signet** (worthless coins,
+30-second blocks, 3-conf *final* ≈ 90 s).
+
+The seller is always a daemon in **terminal 1** — identical for both tracks. Only
+**terminal 2**, the buyer, differs:
+
+- **Track A — CLI:** the buyer types `cm pay`.
+- **Track B — MCP:** the buyer's agent calls `cm_pay` from a plain sentence.
+
+The seller can't be "started" over MCP (a daemon does not fit MCP's request/response model),
+so its one line is CLI in both tracks. Everything a person *asks* still goes through MCP in
+Track B.
+
+---
+
+## Shared setup (once, off camera)
+
+Two keys, do not confuse them:
+- **card key** = `cm id` output (ed25519). The buyer pays to *this*.
+- **WG pubkey** = `cm setup` `identity:` line (x25519). Only for the DHT-less direct path.
+
+```sh
+export CM_NETWORK=signet
+
+# Seller identity (needs no coins). Copy its CARD KEY.
+CM_HOME=~/cm-seller cm setup
+CM_HOME=~/cm-seller cm id            # -> <SELLER-CARD-KEY>
+
+# Buyer must have signet funds. The MCP demo wallet (default store) already does;
+# check it, and top up from https://faucet.mutinynet.com/ if needed.
+cm balance
+```
+
+---
+
+## Terminal 1 — seller (both tracks)
+
+```sh
+export CM_NETWORK=signet
+CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820
+```
+
+Leave it running. It publishes the card to the DHT, accepts any buyer's WireGuard handshake,
+and books deposits from the chain. Its log is your seller-side view.
+
+## Terminal 2 — buyer
+
+### Track A — CLI
+
+```sh
+export CM_NETWORK=signet
+cm pay <SELLER-CARD-KEY> 5000        # discover -> talk -> settle
+cm confs <txid>                      # from the pay output; watch it reach final
+cm balance                           # dropped by 5000 + fee
+```
+
+### Track B — MCP
+
+Terminal 2 runs your MCP client — **Claude Code in a terminal** (`claude`), or Claude
+Desktop. First-time only: the registered `computermoney` server must expose `cm_pay`; if you
+only see `cm_send`/`cm_balance`, **restart the client** so it relaunches on the current
+binary. Then, in plain language:
+
+> **pay 5000 sats to `<SELLER-CARD-KEY>`** → `cm_pay` → returns txid + explorer URL
+> **confirmations on `<txid>`?** → `cm_confs` → pending → soft → final
+> **what's my balance?** → `cm_balance`
+
+To watch the *seller* side over MCP too, register the seller as its own server (optional):
+
+```sh
+claude mcp add -s user computermoney-seller \
+  -e CM_NETWORK=signet -e CM_HOME="$HOME/cm-seller" -- "$HOME/.cargo/bin/cm" mcp
+```
+
+Then ask it: **show collections** → `cm_collections` (the issued address flips to *paid*).
+
+Both tracks hit the exact same ledger-first settle path; the only difference is who types the
+verb.
+
+---
+
+## Watching each layer move (both tracks)
+
+Keep the seller log (terminal 1) visible and add a sniffer.
+
+| Layer | What proves it | Where |
+|---|---|---|
+| **DHT** | seller `[serve] published card …`; buyer `resolving card <8hex>… (DHT)` then `dialing …`. The card is a signed BEP-44 record on the public BitTorrent DHT — no server holds it. | daemon log + buyer output |
+| **WireGuard** | buyer `[wg] tunnel established`; seller `[serve] session opened with <buyer-key>`. And the wire is real ciphertext: `sudo tcpdump -i lo0 -X udp port 51820` shows encrypted bytes, never the JSON. | logs + `tcpdump` |
+| **Bitcoin L1** | the returned `txid` on `https://mutinynet.com/tx/<txid>`; seller `[recv] verified <txid> pays 5000 sat to our address`; `cm confs` / `cm_confs` → *final*. | explorer + logs |
+
+The seller's `verified … pays 5000 sat` line is the point: the receipt comes from the chain,
+matched to the address it issued — never from the buyer's claim.
+
+---
+
+## Notes
+
+- **`cm_pay` missing in the MCP client?** Restart it (see Track B).
+- **`no card found on the DHT`** — give the daemon 30–60 s to propagate, then retry. To skip
+  the DHT and test only WireGuard + L1: `cm pay <SELLER-WG-PUBKEY>@127.0.0.1:51820 5000`
+  (WG pubkey = the seller's `cm setup` `identity:` line). No MCP form for this.
+- **Two machines instead of two terminals:** give the seller a reachable endpoint
+  (`--ep <public-ip>:51820`, open UDP 51820); the buyer resolves the same card key. The rest
+  is unchanged.
+- **Reset:** `rm -rf ~/cm-seller` (signet coins are worthless).
+- **Testnet3** works the same with `CM_NETWORK=testnet`, but blocks are ~10 min and faucets
+  are often dry; signet is the smoother demo.
+
+
+
+========================================================================
+# Demo video script  (docs/demo-video-script.md)
+========================================================================
+
+A ~2-minute screen recording where an agent pays another agent in Bitcoin, and you can
+*see* each of the three layers move. The buyer is driven in plain language through MCP; the
+seller is a background daemon. Everything is **signet** (worthless coins, 30-second blocks).
+
+## Recording setup
+
+Lay out four panes:
+
+- **Claude** (the MCP client) — where you type the buyer's instruction. Large, left half.
+- **Seller daemon** terminal (top-right): the `cm serve` log.
+- **tcpdump** terminal (mid-right): proves the tunnel is encrypted.
+- **Browser** (bottom-right / full-screen for the L1 beat): the block explorer.
+
+Prep before you hit record (off camera):
+
+```sh
+export CM_NETWORK=signet
+CM_HOME=~/cm-seller cm setup            # seller wallet (needs no coins)
+CM_HOME=~/cm-seller cm id               # -> SELLER CARD KEY, keep it on a sticky note
+```
+
+Confirm the buyer (your registered MCP wallet) has signet funds: ask Claude *"what's my
+computermoney balance?"* — it should show a few thousand sats. If not, fund the address from
+<https://faucet.mutinynet.com/>. Make sure Claude shows the `cm_pay` tool (restart it if you
+only see `cm_send`/`cm_balance`).
+
+---
+
+## Scene 1 — the cast (0:00–0:20)
+
+**On screen:** the seller terminal. Start the daemon.
+
+```sh
+CM_HOME=~/cm-seller cm serve --bind 127.0.0.1:51820 --ep 127.0.0.1:51820
+```
+
+**Say:** "Two AI agents, one machine, each with its own Bitcoin wallet. This is the seller.
+It has no address book and no server — its only public handle is a *card key*."
+
+## Scene 2 — DHT: the card goes up (0:20–0:40)
+
+**On screen:** highlight the seller line `[serve] published card <wg-key> @ 127.0.0.1:51820`,
+and keep the **card key** from `cm id` (Scene setup) visible on its sticky note.
+
+**Say:** "The seller signs a tiny card — its tunnel endpoint — and publishes it to the public
+BitTorrent DHT. No server hosts it. Any agent that knows the key can look the seller up,
+anywhere in the world." *(Callout: the payable lookup key is the `cm id` value; the log line
+above just confirms the publish is live. The hex in the log is the tunnel key inside the
+card, not the lookup key — don't paste that one.)*
+
+## Scene 3 — WireGuard: the tunnel (0:40–1:10)
+
+**On screen:** Claude. Type the buyer's instruction:
+
+> **pay 5000 sats to `<seller-card-key>`**
+
+As `cm_pay` runs, the buyer shows `resolving card …(DHT)` → `dialing … @ 127.0.0.1:51820`,
+and the seller flips to `[serve] session opened with <buyer-key>`.
+
+Cut to the tcpdump pane (start it just before you send):
+
+```sh
+sudo tcpdump -i lo0 -X udp port 51820
+```
+
+**Say:** "One sentence. The buyer resolves that card on the DHT, then opens a *real*
+WireGuard tunnel — keyed by the wallet seed, not a password. Watch the wire: it's pure
+ciphertext. The amount, the address, everything the two agents say is encrypted." *(Callout:
+the hex dump — no readable JSON.)*
+
+## Scene 4 — Bitcoin L1: settle (1:10–1:45)
+
+**On screen:** `cm_pay` returns `txid …` and an explorer URL. Open it.
+
+**Say:** "The buyer builds one Bitcoin transaction, signs it with its key, and broadcasts it.
+Here it is on the chain — 5000 sats to the address the seller just handed out." *(Show the tx
+on mutinynet.)*
+
+Back to the seller log: `verified <txid> pays 5000 sat to our address`. Then in Claude:
+
+> **did a payment arrive? show collections** → `cm_collections` (shows *paid*)
+> **confirmations on `<txid>`?** → `cm_confs` (→ *final*)
+
+**Say:** "The seller doesn't trust the buyer's word — it reads the *chain*, confirms the tx
+really pays its address, and books the real amount. Three confirmations: final."
+
+## Scene 5 — the point (1:45–2:00)
+
+**Say:** "No custodian ever held the coins. No account, no server. One seed is the identity
+for both the money and the channel — the key *is* the agent. That's computermoney."
+
+**On screen:** the repo + `curl -fsSL …/install.sh | sh`.
+
+---
+
+## 60-second cut
+
+Drop Scene 1 and the explorer beat. Sequence: card key on screen (5s) → *"pay 5000 sats to
+this"* in Claude (10s) → DHT-resolve + tunnel logs + tcpdump ciphertext (20s) → txid returned
++ seller `verified … pays 5000` + `cm_confs` final (20s) → one-line close (5s).
+
+## Layer cheat-sheet (keep visible while editing)
+
+| Beat | The one thing to show |
+|---|---|
+| DHT | seller `published card <key>` — no server holds it |
+| WireGuard | tcpdump ciphertext + `session opened with <key>` |
+| Bitcoin L1 | the txid on the explorer + `verified … pays 5000 sat` |

@@ -1,4 +1,7 @@
-# Two-terminal demo: same pipeline, CLI or MCP
+---
+title: Try it (2 terminals)
+nav_order: 4
+---
 
 One machine, two terminals, the full **discover (DHT) → talk (WireGuard) → settle
 (Bitcoin L1)** pipeline between two agents. Everything is **signet** (worthless coins,

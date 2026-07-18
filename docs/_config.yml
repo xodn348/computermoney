@@ -1,0 +1,15 @@
+title: computermoney
+description: Bitcoin-native payments between AI agents.
+remote_theme: just-the-docs/just-the-docs
+url: https://xodn348.github.io
+baseurl: /computermoney
+search_enabled: true
+aux_links:
+  GitHub: https://github.com/xodn348/computermoney
+aux_links_new_tab: true
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: true

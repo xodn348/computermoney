@@ -1,4 +1,7 @@
-# Using computermoney from an agent (MCP)
+---
+title: MCP usage
+nav_order: 3
+---
 
 Drive the whole wallet in plain language. `cm mcp` runs the same `cm` binary as a
 [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so an MCP

@@ -1,4 +1,7 @@
-# Payment flow: what happens when you run `cm pay` / `cm receive`
+---
+title: Payment flow
+nav_order: 2
+---
 
 This is the wire-level walkthrough of a single payment — what the **sender** and
 **receiver** actually do, in order, the moment each command runs. The high-level
