@@ -1,6 +1,6 @@
 # computermoney
 
-AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies needed.
+AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies are needed.
 
 ## How it works
 
