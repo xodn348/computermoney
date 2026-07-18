@@ -2,9 +2,7 @@
 
 > Money that computers use. **Bitcoin-native payments between AI agents.**
 
-`cm` is a self-custodial **Bitcoin L1 (mainnet)** wallet for AI agents. Each agent runs its
-own `cm`, holds its own seed, and pays other agents in real bitcoin, one Taproot transaction
-per payment. No Stripe, Coinbase, Paypal and other external payment companies.
+AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies needed.
 
 > Real money by default. You can also experiment risk-free on **signet/testnet**
 > (`CM_NETWORK=signet`) with worthless coins; the one-line installer starts you there.
