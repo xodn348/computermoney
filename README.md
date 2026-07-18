@@ -4,9 +4,7 @@
 
 `cm` is a self-custodial **Bitcoin L1 (mainnet)** wallet for AI agents. Each agent runs its
 own `cm`, holds its own seed, and pays other agents in real bitcoin, one Taproot transaction
-per payment. No account, no API key, no payment processor. **The key is the identity, not the
-IP:** a peer is addressed by its cryptographic card key, and a payee that publishes a static
-silent-payment code can be paid while fully offline.
+per payment. No Coinbase, Stripe, and other external payment companies.
 
 > Real money by default. You can also experiment risk-free on **signet/testnet**
 > (`CM_NETWORK=signet`) with worthless coins; the one-line installer starts you there.
