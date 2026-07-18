@@ -1,5 +1,7 @@
 # computermoney
 
+[![Docs](https://img.shields.io/badge/docs-live-2ea44f)](https://xodn348.github.io/computermoney/) [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+
 AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies are needed.
 
 ## How it works
@@ -142,30 +144,19 @@ cm mcp                            run as an MCP server so an agent drives it in 
 
 `cm mcp` exposes the whole pipeline to any MCP client (Claude Code, Claude Desktop, or your
 own agent) as plain-language tools, so *"pay 5000 sats to `<card-key>`"* just works with no
-shell and no key handling. The seed never crosses the tool boundary. See
-[`docs/mcp-usage.md`](docs/mcp-usage.md).
+shell and no key handling. The seed never crosses the tool boundary. See the
+[MCP guide](https://xodn348.github.io/computermoney/mcp-usage.html).
 
 ## Docs
 
-Docs site: **[xodn348.github.io/computermoney](https://xodn348.github.io/computermoney/)**.
-
-- [`docs/payment-flow.md`](docs/payment-flow.md) — the function-by-function order inside `cm pay` and the seller daemon.
-- [`docs/mcp-usage.md`](docs/mcp-usage.md) — driving the wallet in plain language over MCP.
-- [`docs/demo-2-terminal.md`](docs/demo-2-terminal.md) — try the full pipeline on one machine (signet).
-- [`docs/demo-video-script.md`](docs/demo-video-script.md) — shot list for the demo video.
-
-For AI agents: [`docs/llms.txt`](docs/llms.txt) (a map of the docs) and [`docs/llms-full.txt`](docs/llms-full.txt) (the full text inlined).
+Full docs, including the payment flow, MCP usage, and a runnable walkthrough:
+**[xodn348.github.io/computermoney](https://xodn348.github.io/computermoney/)**. For agents,
+an AI-readable map lives at [`llms.txt`](https://xodn348.github.io/computermoney/llms.txt).
 
 ## License
 
-**[GNU AGPL v3.0](LICENSE)**, Copyright (C) 2026 Ebsilon, Inc. Network use counts as
-distribution: run a modified `cm` as a service and you must offer its users the source. See
-[`LICENSE`](LICENSE) for the exact terms.
+Licensed under the [GNU AGPL v3.0](LICENSE), Copyright (C) 2026 Ebsilon, Inc.
 
-The name and logo are trademarks of Ebsilon, Inc., covered separately by the
-[trademark policy](TRADEMARK.md): the code is yours to build on under the AGPL, but
-"computermoney" as a product name is not. Contributions require a Developer Certificate of
-Origin sign-off (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
-
-Third-party components (all permissive) are listed in
-[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
+"computermoney" is a trademark of Ebsilon, Inc. ([trademark policy](TRADEMARK.md)).
+Third-party notices: [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md). Contributing
+requires a DCO sign-off ([`CONTRIBUTING.md`](CONTRIBUTING.md)).
