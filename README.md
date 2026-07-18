@@ -4,6 +4,22 @@
 
 AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies are needed.
 
+## Demo
+
+An agent driving `cm` in plain language, end to end: no processor, no account, real bitcoin.
+
+**1. Pay a peer found on the DHT.** The agent reads B's card from the DHT and pays its static
+silent-payment code on Bitcoin L1. B can be offline.
+
+<!-- On GitHub: click Edit (the pencil), then drag computermoney_demo_1_dht.mp4 onto the italic line below and commit. -->
+_Drop `computermoney_demo_1_dht.mp4` on this line._
+
+**2. Sell data over HTTP 402.** A seller serves a dataset behind a 402; the buyer's agent
+auto-pays within its cap and gets the file back.
+
+<!-- On GitHub: drag computermoney_demo_2_data.mp4 onto the italic line below and commit. -->
+_Drop `computermoney_demo_2_data.mp4` on this line._
+
 ## How it works
 
 Three layers, each doing one job: **discover** on the DHT, **talk** over WireGuard, **settle**
