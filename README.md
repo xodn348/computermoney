@@ -70,7 +70,7 @@ cap and gets the content back. No signup, no card. See [Selling data](#selling-d
 
 ## Install
 
-_Supported platforms: Linux and macOS (Windows via WSL). The installer is a POSIX shell script; the userspace WireGuard stack needs no kernel module._
+_Supported platforms: Linux and macOS (Windows via WSL)._
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/xodn348/computermoney/main/install.sh | sh
