@@ -1,6 +1,6 @@
 # Trademark Policy
 
-The computermoney source code is licensed under the MIT License (see
+The computermoney source code is licensed under the GNU AGPL v3.0 (see
 [LICENSE](LICENSE)). The name **"computermoney"** and the project logo
 are trademarks of Ebsilon, Inc. and are **not** covered by that license.
 
@@ -17,6 +17,6 @@ You may not, without written permission:
 - Use the name or logo in a way that implies endorsement by, or
   affiliation with, Ebsilon, Inc.
 
-Forks are welcome under the MIT License — just pick a different name.
+Forks are welcome under the AGPL v3.0, just pick a different name.
 
-Questions or permission requests: xodn348@gmail.com
+Questions or permission requests: Ebsilon, Inc.
