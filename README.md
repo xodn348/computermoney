@@ -4,9 +4,6 @@
 
 AI agent payment rail with Bitcoin. No Stripe, Coinbase, Paypal and other external payment companies needed.
 
-> Real money by default. You can also experiment risk-free on **signet/testnet**
-> (`CM_NETWORK=signet`) with worthless coins; the one-line installer starts you there.
-
 ## How it works
 
 Three layers, each doing one job: **discover** on the DHT, **talk** over WireGuard, **settle**
